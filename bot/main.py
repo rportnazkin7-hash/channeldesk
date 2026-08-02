@@ -8,6 +8,15 @@ from aiogram.types import ChatMemberUpdated,InlineKeyboardButton,InlineKeyboardM
 
 router=Router()
 
+def extract_invite_token(text:str)->str|None:
+    """Извлекает токен приглашения из '/start invite_<token>'."""
+    parts=(text or '').strip().split(None,1)
+    if len(parts)!=2: return None
+    rest=parts[1].strip()
+    prefix='invite_'
+    if rest.startswith(prefix): return rest[len(prefix):] or None
+    return None
+
 def db_url()->str:
     value=os.getenv('DATABASE_URL','').strip()
     if not value: raise RuntimeError('DATABASE_URL is required')
@@ -31,6 +40,17 @@ def save_connection(event:ChatMemberUpdated,connected:bool)->None:
         else:
             cur.execute("UPDATE cd_channel_connections SET status='removed',updated_at=now() WHERE telegram_chat_id=%s",(event.chat.id,))
             cur.execute("UPDATE cd_channels SET is_connected=false,updated_at=now() WHERE telegram_chat_id=%s",(event.chat.id,))
+
+@router.message(CommandStart(deep_link=True))
+async def start_deep_link(message:Message):
+    token=extract_invite_token(message.text or '')
+    url=os.getenv('MINI_APP_URL','').strip()
+    if token and url:
+        keyboard=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(
+            text='Принять приглашение',web_app=WebAppInfo(url=f'{url}?startapp=invite_{token}'))]])
+        await message.answer('Вас пригласили в рабочее пространство ChannelDesk. Нажмите кнопку, чтобы принять приглашение.',reply_markup=keyboard)
+        return
+    await start(message)
 
 @router.message(CommandStart())
 async def start(message:Message):
