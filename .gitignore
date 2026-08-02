@@ -1,0 +1,19 @@
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Node
+node_modules/
+dist/
+build/
+coverage/
+
+# Python
+__pycache__/
+.pytest_cache/
+.venv/
+*.pyc
+
+# OS
+.DS_Store
