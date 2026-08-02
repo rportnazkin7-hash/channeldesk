@@ -17,7 +17,10 @@
    - `api/channels.py` — подключение канала переведено на live-проверку + RBAC;
    - `tests/` — 35 pytest-тестов (auth, rbac, invites, channels, telegram, workspaces), все зелёные;
    - `src/App.tsx` + `src/api.ts` — панель «Команда» (участники, создание приглашения, копирование токена);
+   - `bot/main.py` — deep link `/start invite_<token>` + кнопка WebApp с `startapp`;
+   - `src/App.tsx`/`src/main.tsx` — авто-принятие приглашения из deep link;
    - `README.md` — документация API.
+   Коммиты: `92da12d`, `f665b4f`, `8c34406` (+финальный docs).
 
 ## Проверено
 
@@ -37,8 +40,10 @@
    - снова добавить (выдать публикацию, редактирование, удаление);
    - проверить личное уведомление и появление канала в Mini App (`/api/channel-connections/pending`);
    - подключить канал — теперь перед подключением идёт live-проверка `getChatMember`.
-4. **Проверка приглашений**: создать приглашение через Mini App, принять токен через
-   `POST /api/invites/accept` (после подключения к боту можно сделать глубокую ссылку `/start invite_...`).
+5. **Проверка приглашений**: создать приглашение через Mini App (панель «Команда»),
+   отправить сотруднику ссылку `https://t.me/channel_desk_bot?start=invite_<token>` —
+   бот покажет кнопку WebApp, Mini App автоматически примет приглашение
+   (`POST /api/invites/accept` через `startapp=invite_<token>`) и покажет баннер.
 
 ## Следующий этап
 
