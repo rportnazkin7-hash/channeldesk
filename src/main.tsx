@@ -17,6 +17,6 @@ createRoot(root).render(<React.StrictMode><App /></React.StrictMode>)
 
 declare global {
   interface Window {
-    Telegram?: { WebApp?: { ready?:()=>void; expand?:()=>void; setHeaderColor?:(c:string)=>void; setBackgroundColor?:(c:string)=>void } }
+    Telegram?: { WebApp?: { initData?:string; ready?:()=>void; expand?:()=>void; setHeaderColor?:(c:string)=>void; setBackgroundColor?:(c:string)=>void } }
   }
 }
