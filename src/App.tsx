@@ -2,6 +2,7 @@ import { useEffect,useState } from 'react'
 import { BarChart3,CalendarDays,CirclePlus,Link2,Megaphone,MoreHorizontal,Radio,RefreshCw,Users } from 'lucide-react'
 import { api,type Workspace,type Pending,type Channel,type Member,type Invite } from './api'
 
+const APP_VERSION = 'v0.5.0'
 const ROLE_LABEL:Record<string,string>={owner:'Владелец',admin:'Администратор',editor:'Редактор',author:'Автор',designer:'Дизайнер',ad_manager:'Рекламный менеджер',analyst:'Аналитик',viewer:'Наблюдатель'}
 
 function errorHint(msg:string):string{
@@ -39,5 +40,6 @@ export default function App(){
     {members.length?members.map(m=><div key={m.id} style={{padding:'13px 0',borderBottom:'1px solid #252b36',display:'flex',justifyContent:'space-between',alignItems:'center'}}><strong>{m.first_name||m.username||`ID ${m.telegram_id}`}</strong><span style={{color:'#8d96a8',fontSize:12}}>{ROLE_LABEL[m.role]||m.role}</span></div>):<div className="empty"><p>Участников пока нет.</p></div>}
    </section>}
   </>}
+  <div className="ver">ChannelDesk {APP_VERSION}</div>
  </main><nav>{[[BarChart3,'Обзор'],[CalendarDays,'Календарь'],[CirclePlus,'Создать'],[Megaphone,'Реклама'],[MoreHorizontal,'Ещё']].map(([Icon,label],i)=>{const C=Icon as typeof BarChart3;return <button className={i===0?'active':''} key={label as string}><C size={21}/><span>{label as string}</span></button>})}</nav></div>
 }
