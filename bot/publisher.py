@@ -79,9 +79,12 @@ def _claim_posts(conn, now_iso: str) -> list[dict]:
     """
     rows = []
     with conn.cursor() as cur:
-        cur.execute("""SELECT id,workspace_id,channel_id,text,buttons,publish_key,attempt_count,telegram_message_id
-        FROM cd_posts WHERE (status='scheduled' AND scheduled_at<=%s) OR status='publishing'
-        ORDER BY scheduled_at NULLS LAST, id""", (now_iso,))
+        cur.execute("""SELECT p.id,p.workspace_id,p.channel_id,p.text,p.buttons,p.publish_key,p.attempt_count,p.telegram_message_id
+        FROM cd_posts p
+        LEFT JOIN cd_ad_bookings b ON b.post_id=p.id
+        WHERE ((p.status='scheduled' AND p.scheduled_at<=%s) OR p.status='publishing')
+        AND (b.id IS NULL OR b.payment_status IN ('paid','partially_paid'))
+        ORDER BY p.scheduled_at NULLS LAST, p.id""", (now_iso,))
         candidates = cur.fetchall()
         for post in candidates:
             cur.execute("""UPDATE cd_posts SET status='publishing',attempt_count=attempt_count+1,updated_at=now()
