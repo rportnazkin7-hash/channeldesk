@@ -302,11 +302,14 @@ def run_once() -> int:
             _send_task_reminders(token, conn)
         except Exception as exc:
             logger.exception('task reminders failed: %s', exc)
+        global EXPORTS_RUNS
+        EXPORTS_RUNS += 1
         try:
             from bot.exports import process_pending_exports
             process_pending_exports(token, conn)
         except Exception as exc:
             logger.exception('exports processing failed: %s', exc)
+            _fail_all_pending_exports(conn, str(exc)[:500])
         conn.commit()
         return len(posts)
     finally:

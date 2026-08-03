@@ -10,7 +10,8 @@ from bot import migrate, publisher
 
 logger=logging.getLogger('channeldesk.bot')
 router=Router()
-BOT_CODE_VERSION='86ed888+diag3'
+BOT_CODE_VERSION='cd55432+diag4'
+_process_started=time.time()
 _publisher_task=None
 
 def extract_invite_token(text:str)->str|None:
@@ -74,10 +75,21 @@ async def status_cmd(message:Message):
     recent_txt = '\n'.join(f'  #{r[0]}.{r[1]} → {r[2]}' + (f' ({str(r[3])[:80]})' if r[3] else '') for r in recent) or '  (нет)'
     last_run = publisher.LAST_RUN_AT
     last_run_txt = f'{int(time.time()-last_run)} с назад' if last_run else 'никогда'
+    # проверка библиотек, необходимых для экспорта
+    libs = {}
+    for lib in ('openpyxl', 'fpdf', 'aiogram', 'psycopg'):
+        try:
+            mod = __import__(lib)
+            libs[lib] = getattr(mod, '__version__', '?')
+        except Exception:
+            libs[lib] = 'НЕТ'
+    uptime = int(time.time() - _process_started)
     await message.answer(f'Publisher: {"✅ работает" if alive else "❌ не запущен"}\n'
                          f'Интервал: {publisher.POLL_INTERVAL} с\n'
                          f'БД: {db}\n'
                          f'Цикл: последний {last_run_txt}, ошибок: {publisher.RUN_ERRORS}, экспорт-вызовов: {publisher.EXPORTS_RUNS}\n'
+                         f'Процесс: PID {os.getpid()}, uptime {uptime} с\n'
+                         f'Библиотеки: openpyxl {libs["openpyxl"]}, fpdf {libs["fpdf"]}, aiogram {libs["aiogram"]}\n'
                          f'Экспорты: {export_info}\n'
                          f'Последние:\n{recent_txt}\n'
                          f'Код: {BOT_CODE_VERSION}')
