@@ -34,6 +34,9 @@ class FakeConn:
         self.cursors.append(c)
         return c
 
+    def commit(self):
+        pass
+
     def __enter__(self):
         return self
 
