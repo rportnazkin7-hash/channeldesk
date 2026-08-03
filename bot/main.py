@@ -10,7 +10,7 @@ from bot import migrate, publisher
 
 logger=logging.getLogger('channeldesk.bot')
 router=Router()
-BOT_CODE_VERSION='f8509df+fix-autocommit'
+BOT_CODE_VERSION='mtproto-analytics'
 _process_started=time.time()
 _publisher_task=None
 
@@ -75,11 +75,18 @@ async def status_cmd(message:Message):
     except Exception as exc:
         export_info=f'❌ таблицы нет: {str(exc)[:120]}'
     recent_txt = '\n'.join(f'  #{r[0]}.{r[1]} → {r[2]}' + (f' ({str(r[3])[:80]})' if r[3] else '') for r in recent) or '  (нет)'
+    mt = publisher.MTPROTO_LAST_RESULT
+    if not mt:
+        mt_info = 'не запускался'
+    elif not mt.get('enabled'):
+        mt_info = 'выключен: нет MT_PROTO_* переменных'
+    else:
+        mt_info = f"синхронизаций: {publisher.MTPROTO_RUNS}, каналов: {mt.get('ok', 0)}, ошибок: {len(mt.get('errors', []))}"
     last_run = publisher.LAST_RUN_AT
     last_run_txt = f'{int(time.time()-last_run)} с назад' if last_run else 'никогда'
     # проверка библиотек, необходимых для экспорта
     libs = {}
-    for lib in ('openpyxl', 'fpdf', 'aiogram', 'psycopg'):
+    for lib in ('openpyxl', 'fpdf', 'aiogram', 'psycopg', 'telethon'):
         try:
             mod = __import__(lib)
             libs[lib] = getattr(mod, '__version__', '?')
@@ -91,8 +98,9 @@ async def status_cmd(message:Message):
                          f'БД: {db}\n'
                          f'БД-хэш: {db_hash}\n'
                          f'Цикл: последний {last_run_txt}, ошибок: {publisher.RUN_ERRORS}, экспорт-вызовов: {publisher.EXPORTS_RUNS}\n'
+                         f'MTProto: {mt_info}\n'
                          f'Процесс: PID {os.getpid()}, uptime {uptime} с\n'
-                         f'Библиотеки: openpyxl {libs["openpyxl"]}, fpdf {libs["fpdf"]}, aiogram {libs["aiogram"]}\n'
+                         f'Библиотеки: openpyxl {libs["openpyxl"]}, fpdf {libs["fpdf"]}, aiogram {libs["aiogram"]}, telethon {libs["telethon"]}\n'
                          f'Экспорты: {export_info}\n'
                          f'Последние:\n{recent_txt}\n'
                          f'Код: {BOT_CODE_VERSION}')
