@@ -74,14 +74,14 @@ def _claim_posts(conn, now_iso: str) -> list[dict]:
     """
     rows = []
     with conn.cursor() as cur:
-        cur.execute("""SELECT id,workspace_id,channel_id,text,publish_key,attempt_count,telegram_message_id
+        cur.execute("""SELECT id,workspace_id,channel_id,text,buttons,publish_key,attempt_count,telegram_message_id
         FROM cd_posts WHERE (status='scheduled' AND scheduled_at<=%s) OR status='publishing'
         ORDER BY scheduled_at NULLS LAST, id""", (now_iso,))
         candidates = cur.fetchall()
         for post in candidates:
             cur.execute("""UPDATE cd_posts SET status='publishing',attempt_count=attempt_count+1,updated_at=now()
             WHERE id=%s AND status IN ('scheduled','publishing') AND attempt_count<%s
-            RETURNING id,workspace_id,channel_id,text,publish_key,attempt_count,telegram_message_id""",
+            RETURNING id,workspace_id,channel_id,text,buttons,publish_key,attempt_count,telegram_message_id""",
                         (post['id'], MAX_ATTEMPTS))
             claimed = cur.fetchone()
             if claimed:
@@ -147,11 +147,15 @@ def _publish_one(token: str, conn, post: dict) -> None:
         _record_final_error(conn, post['id'], 'Канал не найден или отключён')
         return
     try:
-        result = _telegram_request(token, 'sendMessage', {
+        params = {
             'chat_id': channel['telegram_chat_id'],
             'text': post['text'] or '',
             'parse_mode': 'HTML',
-        })
+        }
+        buttons = post.get('buttons') or []
+        if buttons:
+            params['reply_markup'] = json.dumps({'inline_keyboard': buttons})
+        result = _telegram_request(token, 'sendMessage', params)
         if not result.get('ok'):
             raise RuntimeError(f"Telegram API error: {result.get('description', 'unknown')}")
         message_id = (result.get('result') or {}).get('message_id')

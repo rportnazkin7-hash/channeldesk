@@ -57,6 +57,7 @@ class FakeConn:
 
 
 CANDIDATE = {'id': 1, 'workspace_id': 3, 'channel_id': 5, 'text': 'hello <b>world</b>',
+             'buttons': [[{'text': 'Открыть', 'url': 'https://x.ru'}]],
              'publish_key': 'key123', 'attempt_count': 0, 'telegram_message_id': None}
 CLAIMED = dict(CANDIDATE)
 CHANNEL = {'id': 5, 'telegram_chat_id': -100123, 'title': 'Тестовый канал'}
@@ -99,6 +100,9 @@ def test_full_publish_cycle(monkeypatch):
     assert params['chat_id'] == -100123
     assert params['text'] == 'hello <b>world</b>'
     assert params['parse_mode'] == 'HTML'
+    # inline-кнопки передаются как JSON reply_markup
+    import json as _json
+    assert params['reply_markup'] == _json.dumps({'inline_keyboard': [[{'text': 'Открыть', 'url': 'https://x.ru'}]]})
 
     # записан успех: статус published + журнал попытки
     sql = ' '.join(call[0] for cur in conn.cursors for call in cur.calls)
