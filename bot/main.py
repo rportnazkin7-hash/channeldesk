@@ -3,13 +3,14 @@ import asyncio,json,logging,os
 import psycopg
 from aiogram import Bot,Dispatcher,Router
 from aiogram.enums import ChatMemberStatus,ChatType
-from aiogram.filters import CommandStart
+from aiogram.filters import Command,CommandStart
 from aiogram.types import ChatMemberUpdated,InlineKeyboardButton,InlineKeyboardMarkup,Message,WebAppInfo
 from bot.db import db_url
 from bot import migrate, publisher
 
 logger=logging.getLogger('channeldesk.bot')
 router=Router()
+_publisher_task=None
 
 def extract_invite_token(text:str)->str|None:
     """Извлекает токен приглашения из '/start invite_<token>'."""
@@ -50,6 +51,17 @@ async def start_deep_link(message:Message):
         return
     await start(message)
 
+@router.message(Command('status'))
+async def status_cmd(message:Message):
+    admins={int(x) for x in os.getenv('ADMIN_IDS','').split(',') if x.strip().isdigit()}
+    if message.from_user.id not in admins:
+        await message.answer('Нет доступа.'); return
+    alive=_publisher_task is not None and not _publisher_task.done()
+    db=db_url().split('@')[-1] if '@' in db_url() else '?'
+    await message.answer(f'Publisher: {"✅ работает" if alive else "❌ не запущен"}\n'
+                         f'Интервал: {publisher.POLL_INTERVAL} с\n'
+                         f'БД: {db}')
+
 @router.message(CommandStart())
 async def start(message:Message):
     url=os.getenv('MINI_APP_URL','').strip(); keyboard=None
@@ -78,12 +90,13 @@ async def main():
     bot=Bot(token);dp=Dispatcher();dp.include_router(router)
     # Фоновый publisher-цикл в том же процессе (Bothost: один Python Worker).
     # Отдельное соединение на цикл — безопасно с aiogram.
-    publisher_task=asyncio.create_task(publisher.loop())
+    global _publisher_task
+    _publisher_task=asyncio.create_task(publisher.loop())
     try:
         await dp.start_polling(bot,allowed_updates=['message','my_chat_member'])
     finally:
-        publisher_task.cancel()
-        try: await publisher_task
+        _publisher_task.cancel()
+        try: await _publisher_task
         except (asyncio.CancelledError, Exception): pass
 
 if __name__=='__main__': asyncio.run(main())

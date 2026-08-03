@@ -168,7 +168,12 @@ def _publish_one(token: str, conn, post: dict) -> None:
             _notify_owner(token, post['id'], (post.get('text') or '')[:80], error_text)
 
 
-async def run_once() -> int:
+def run_once() -> int:
+    """Синхронная функция: вызывается из loop через asyncio.to_thread.
+
+    ВАЖНО: НЕ делать async — to_thread выполнит её как обычную функцию,
+    и тело корутины никогда не запустится (посты зависнут в scheduled без ошибок).
+    """
     token = os.getenv('BOT_TOKEN', '').strip()
     if not token:
         raise RuntimeError('BOT_TOKEN is required')
