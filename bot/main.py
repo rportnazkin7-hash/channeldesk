@@ -1,13 +1,14 @@
 from __future__ import annotations
-import asyncio,json,os
+import asyncio,json,logging,os
 import psycopg
 from aiogram import Bot,Dispatcher,Router
 from aiogram.enums import ChatMemberStatus,ChatType
 from aiogram.filters import CommandStart
 from aiogram.types import ChatMemberUpdated,InlineKeyboardButton,InlineKeyboardMarkup,Message,WebAppInfo
 from bot.db import db_url
-from bot import publisher
+from bot import migrate, publisher
 
+logger=logging.getLogger('channeldesk.bot')
 router=Router()
 
 def extract_invite_token(text:str)->str|None:
@@ -69,6 +70,11 @@ async def bot_membership_changed(event:ChatMemberUpdated):
 async def main():
     token=os.getenv('BOT_TOKEN','').strip()
     if not token: raise RuntimeError('BOT_TOKEN is required')
+    # Автомиграция при старте: применяет неприменённые миграции (идемпотентно).
+    try:
+        await asyncio.to_thread(migrate.apply_pending_migrations)
+    except Exception as exc:
+        logger.warning('migration check skipped: %s', exc)
     bot=Bot(token);dp=Dispatcher();dp.include_router(router)
     # Фоновый publisher-цикл в том же процессе (Bothost: один Python Worker).
     # Отдельное соединение на цикл — безопасно с aiogram.
