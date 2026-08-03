@@ -282,11 +282,16 @@ def run_once() -> int:
         posts = _claim_posts(conn, datetime_now_iso())
         for post in posts:
             _publish_one(token, conn, post)
-        # напоминания о задачах
-        _send_task_reminders(token, conn)
-        # задания экспорта: файл генерируется и отправляется ботом в Telegram
-        from bot.exports import process_pending_exports
-        process_pending_exports(token, conn)
+        # Каждый блок изолирован: сбой одного не роняет остальные.
+        try:
+            _send_task_reminders(token, conn)
+        except Exception as exc:
+            logger.exception('task reminders failed: %s', exc)
+        try:
+            from bot.exports import process_pending_exports
+            process_pending_exports(token, conn)
+        except Exception as exc:
+            logger.exception('exports processing failed: %s', exc)
         conn.commit()
         return len(posts)
     finally:

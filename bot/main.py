@@ -10,7 +10,7 @@ from bot import migrate, publisher
 
 logger=logging.getLogger('channeldesk.bot')
 router=Router()
-BOT_CODE_VERSION='e5c5696+diag'
+BOT_CODE_VERSION='e4109bf+diag2'
 _publisher_task=None
 
 def extract_invite_token(text:str)->str|None:
@@ -61,18 +61,22 @@ async def status_cmd(message:Message):
     db=db_url().split('@')[-1] if '@' in db_url() else '?'
     # диагностика экспорта: есть ли таблица и сколько заданий ждут
     export_info='n/a'
-    pending=0
     try:
         with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
-            cur.execute('SELECT count(*) FROM cd_exports WHERE status=%s',('pending',))
-            pending=cur.fetchone()[0]
-            export_info='✅ таблица есть'
+            cur.execute("""SELECT status, count(*) FROM cd_exports GROUP BY status""")
+            counts = {r[0]: r[1] for r in cur.fetchall()}
+            cur.execute("""SELECT kind, format, status, error_text FROM cd_exports
+            ORDER BY created_at DESC LIMIT 5""")
+            recent = cur.fetchall()
+            export_info = ', '.join(f'{k}={v}' for k, v in counts.items()) or 'пусто'
     except Exception as exc:
         export_info=f'❌ таблицы нет: {str(exc)[:120]}'
+    recent_txt = '\n'.join(f'  #{r[0]}.{r[1]} → {r[2]}' + (f' ({str(r[3])[:80]})' if r[3] else '') for r in recent) or '  (нет)'
     await message.answer(f'Publisher: {"✅ работает" if alive else "❌ не запущен"}\n'
                          f'Интервал: {publisher.POLL_INTERVAL} с\n'
                          f'БД: {db}\n'
-                         f'Экспорт: {export_info}, ожидают: {pending}\n'
+                         f'Экспорты: {export_info}\n'
+                         f'Последние:\n{recent_txt}\n'
                          f'Код: {BOT_CODE_VERSION}')
 
 @router.message(CommandStart())
