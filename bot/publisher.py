@@ -32,6 +32,11 @@ POLL_INTERVAL = 15          # секунд между проходами (пуб
 MAX_ATTEMPTS = 5            # ограничение числа попыток на пост
 TELEGRAM_API = 'https://api.telegram.org'
 
+# Диагностика: счётчики цикла (показываются в /status)
+LAST_RUN_AT: float = 0.0
+RUN_ERRORS: int = 0
+EXPORTS_RUNS: int = 0
+
 RETRYABLE_HTTP = {408, 429, 500, 502, 503, 504}
 
 
@@ -159,6 +164,16 @@ def _record_final_error(conn, post_id: int, error_text: str) -> None:
                     (error_text, post_id))
         cur.execute("INSERT INTO cd_publish_attempts(post_id,success,error_text) VALUES(%s,false,%s)",
                     (post_id, error_text))
+
+
+def _fail_all_pending_exports(conn, error_text: str) -> None:
+    """Если обработка экспорта упала целиком — помечаем все pending как failed."""
+    try:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE cd_exports SET status='failed',error_text=%s WHERE status='pending'",
+                        (error_text,))
+    except Exception:
+        pass
 
 
 def _notify_owner(token: str, post_id: int, title: str, error_text: str) -> None:
@@ -304,14 +319,17 @@ def datetime_now_iso() -> str:
 
 
 async def loop() -> None:
+    global LAST_RUN_AT, RUN_ERRORS
     logger.info('publisher started, interval=%ss', POLL_INTERVAL)
     while True:
         started = time.monotonic()
         try:
             published = await asyncio.to_thread(run_once)
+            LAST_RUN_AT = time.time()
             if published:
                 logger.info('cycle published %s post(s)', published)
         except Exception:
+            RUN_ERRORS += 1
             logger.exception('publisher cycle failed')
         elapsed = time.monotonic() - started
         await asyncio.sleep(max(1, POLL_INTERVAL - elapsed))

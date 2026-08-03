@@ -1,5 +1,5 @@
 from __future__ import annotations
-import asyncio,json,logging,os
+import asyncio,json,logging,os,time
 import psycopg
 from aiogram import Bot,Dispatcher,Router
 from aiogram.enums import ChatMemberStatus,ChatType
@@ -10,7 +10,7 @@ from bot import migrate, publisher
 
 logger=logging.getLogger('channeldesk.bot')
 router=Router()
-BOT_CODE_VERSION='e4109bf+diag2'
+BOT_CODE_VERSION='86ed888+diag3'
 _publisher_task=None
 
 def extract_invite_token(text:str)->str|None:
@@ -72,9 +72,12 @@ async def status_cmd(message:Message):
     except Exception as exc:
         export_info=f'❌ таблицы нет: {str(exc)[:120]}'
     recent_txt = '\n'.join(f'  #{r[0]}.{r[1]} → {r[2]}' + (f' ({str(r[3])[:80]})' if r[3] else '') for r in recent) or '  (нет)'
+    last_run = publisher.LAST_RUN_AT
+    last_run_txt = f'{int(time.time()-last_run)} с назад' if last_run else 'никогда'
     await message.answer(f'Publisher: {"✅ работает" if alive else "❌ не запущен"}\n'
                          f'Интервал: {publisher.POLL_INTERVAL} с\n'
                          f'БД: {db}\n'
+                         f'Цикл: последний {last_run_txt}, ошибок: {publisher.RUN_ERRORS}, экспорт-вызовов: {publisher.EXPORTS_RUNS}\n'
                          f'Экспорты: {export_info}\n'
                          f'Последние:\n{recent_txt}\n'
                          f'Код: {BOT_CODE_VERSION}')
