@@ -170,9 +170,10 @@ def _generate_file(conn, kind: str, fmt: str, workspace_id: int) -> tuple[bytes,
 
 
 def _claim_export(conn) -> dict | None:
+    """Забирает одно pending-задание. Простой SELECT (publisher один, гонок нет)."""
     with conn.cursor() as cur:
         cur.execute("""SELECT id,workspace_id,telegram_id,kind,format FROM cd_exports
-        WHERE status='pending' ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED""")
+        WHERE status='pending' ORDER BY created_at LIMIT 1""")
         job = cur.fetchone()
         if job:
             cur.execute("UPDATE cd_exports SET status='processing' WHERE id=%s", (job['id'],))
@@ -184,6 +185,7 @@ def process_pending_exports(token: str, conn) -> int:
     processed = 0
     for _ in range(5):
         job = _claim_export(conn)
+        conn.commit()  # фиксируем переход pending->processing
         if not job:
             break
         try:
