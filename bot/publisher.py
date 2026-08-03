@@ -176,6 +176,33 @@ def _fail_all_pending_exports(conn, error_text: str) -> None:
         pass
 
 
+AUTO_CANCEL_OVERDUE_DAYS = 3  # неоплаченная бронь отменяется через 3 дня после начала
+
+
+def _update_booking_statuses(conn) -> None:
+    """Автоматический жизненный цикл размещений (по времени, раз в цикл).
+
+    - оплаченная confirmed: publish_at наступил → active
+    - неоплаченная (requested/confirmed): publish_at наступил → overdue
+    - активная: delete_at наступил → done
+    - overdue: прошло > AUTO_CANCEL_OVERDUE_DAYS с publish_at → cancelled
+    """
+    from datetime import datetime, timedelta, timezone
+    now = datetime.now(timezone.utc)
+    cancel_before = now - timedelta(days=AUTO_CANCEL_OVERDUE_DAYS)
+    with conn.cursor() as cur:
+        cur.execute("UPDATE cd_ad_bookings SET status='active',updated_at=now() "
+                    "WHERE status='confirmed' AND payment_status IN ('paid','partially_paid') "
+                    "AND publish_at IS NOT NULL AND publish_at<=%s", (now,))
+        cur.execute("UPDATE cd_ad_bookings SET status='overdue',updated_at=now() "
+                    "WHERE status IN ('requested','confirmed') AND payment_status='unpaid' "
+                    "AND publish_at IS NOT NULL AND publish_at<=%s", (now,))
+        cur.execute("UPDATE cd_ad_bookings SET status='done',updated_at=now() "
+                    "WHERE status='active' AND delete_at IS NOT NULL AND delete_at<=%s", (now,))
+        cur.execute("UPDATE cd_ad_bookings SET status='cancelled',updated_at=now() "
+                    "WHERE status='overdue' AND publish_at IS NOT NULL AND publish_at<=%s", (cancel_before,))
+
+
 def _notify_owner(token: str, post_id: int, title: str, error_text: str) -> None:
     ids: list[int] = []
     for raw in os.getenv('ADMIN_IDS', '').split(','):
@@ -302,6 +329,10 @@ def run_once() -> int:
             _send_task_reminders(token, conn)
         except Exception as exc:
             logger.exception('task reminders failed: %s', exc)
+        try:
+            _update_booking_statuses(conn)
+        except Exception as exc:
+            logger.exception('booking status update failed: %s', exc)
         global EXPORTS_RUNS
         EXPORTS_RUNS += 1
         try:
