@@ -60,6 +60,8 @@ async def status_cmd(message:Message):
         await message.answer('Нет доступа.'); return
     alive=_publisher_task is not None and not _publisher_task.done()
     db=db_url().split('@')[-1] if '@' in db_url() else '?'
+    import hashlib
+    db_hash=hashlib.sha256(db_url().encode()).hexdigest()[:10]
     # диагностика экспорта: есть ли таблица и сколько заданий ждут
     export_info='n/a'
     try:
@@ -87,6 +89,7 @@ async def status_cmd(message:Message):
     await message.answer(f'Publisher: {"✅ работает" if alive else "❌ не запущен"}\n'
                          f'Интервал: {publisher.POLL_INTERVAL} с\n'
                          f'БД: {db}\n'
+                         f'БД-хэш: {db_hash}\n'
                          f'Цикл: последний {last_run_txt}, ошибок: {publisher.RUN_ERRORS}, экспорт-вызовов: {publisher.EXPORTS_RUNS}\n'
                          f'Процесс: PID {os.getpid()}, uptime {uptime} с\n'
                          f'Библиотеки: openpyxl {libs["openpyxl"]}, fpdf {libs["fpdf"]}, aiogram {libs["aiogram"]}\n'
