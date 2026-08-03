@@ -10,7 +10,7 @@ from bot import migrate, publisher
 
 logger=logging.getLogger('channeldesk.bot')
 router=Router()
-BOT_CODE_VERSION='cd55432+diag4'
+BOT_CODE_VERSION='f8509df+fix-autocommit'
 _process_started=time.time()
 _publisher_task=None
 

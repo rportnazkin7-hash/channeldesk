@@ -16,6 +16,10 @@ from datetime import datetime
 from pathlib import Path
 from urllib.request import Request, urlopen
 
+import psycopg
+
+from bot.db import db_url
+
 logger = logging.getLogger('channeldesk.exports')
 
 FONTS_DIR = Path(__file__).resolve().parents[1] / 'assets' / 'fonts'
@@ -181,24 +185,36 @@ def _claim_export(conn) -> dict | None:
 
 
 def process_pending_exports(token: str, conn) -> int:
-    """Обрабатывает до 5 pending-заданий экспорта: генерирует и отправляет файл."""
+    """Обрабатывает до 5 pending-заданий экспорта.
+
+    ВАЖНО: работает на ОТДЕЛЬНОМ соединении с autocommit=True — полностью
+    изолировано от длинной транзакции publisher-цикла. Через Supabase pooler
+    общая транзакция может не видеть строки, записанные Vercel.
+    """
     processed = 0
-    for _ in range(5):
-        job = _claim_export(conn)
-        conn.commit()  # фиксируем переход pending->processing
-        if not job:
-            break
-        try:
-            data, filename, mime = _generate_file(conn, job['kind'], job['format'], job['workspace_id'])
-            _send_document(token, job['telegram_id'], filename, data,
-                           f'ChannelDesk: экспорт «{job["kind"]}» ({job["format"]})')
-            with conn.cursor() as cur:
-                cur.execute("UPDATE cd_exports SET status='done',completed_at=now() WHERE id=%s", (job['id'],))
-            processed += 1
-            logger.info('export %s (%s.%s) sent to %s', job['id'], job['kind'], job['format'], job['telegram_id'])
-        except Exception as exc:
-            logger.exception('export %s failed', job['id'])
-            with conn.cursor() as cur:
-                cur.execute("UPDATE cd_exports SET status='failed',error_text=%s WHERE id=%s",
-                            (str(exc)[:500], job['id']))
-    return processed
+    try:
+        work_conn = psycopg.connect(db_url(), row_factory=psycopg.rows.dict_row, autocommit=True)
+    except Exception as exc:
+        logger.exception('cannot open export connection: %s', exc)
+        return 0
+    try:
+        for _ in range(5):
+            job = _claim_export(work_conn)
+            if not job:
+                break
+            try:
+                data, filename, mime = _generate_file(work_conn, job['kind'], job['format'], job['workspace_id'])
+                _send_document(token, job['telegram_id'], filename, data,
+                               f'ChannelDesk: экспорт «{job["kind"]}» ({job["format"]})')
+                with work_conn.cursor() as cur:
+                    cur.execute("UPDATE cd_exports SET status='done',completed_at=now() WHERE id=%s", (job['id'],))
+                processed += 1
+                logger.info('export %s (%s.%s) sent to %s', job['id'], job['kind'], job['format'], job['telegram_id'])
+            except Exception as exc:
+                logger.exception('export %s failed', job['id'])
+                with work_conn.cursor() as cur:
+                    cur.execute("UPDATE cd_exports SET status='failed',error_text=%s WHERE id=%s",
+                                (str(exc)[:500], job['id']))
+        return processed
+    finally:
+        work_conn.close()

@@ -37,6 +37,9 @@ class FakeConn:
     def commit(self):
         pass
 
+    def close(self):
+        pass
+
     def __enter__(self):
         return self
 
@@ -82,15 +85,17 @@ def test_process_pending_exports_sends_document(monkeypatch):
         sent.append((chat_id, filename, data))
 
     monkeypatch.setattr('bot.exports._send_document', fake_send_document)
-    # порядок: claim fetchone -> JOB; _load_rows fetchall -> [POST_ROW]; второй claim fetchone -> None
-    conn = FakeConn([JOB, [POST_ROW], None])
-    count = exports.process_pending_exports('test-token', conn)
+    monkeypatch.setenv('DATABASE_URL', 'postgresql://u:p@localhost/db')
+    # process_pending_exports открывает своё соединение (autocommit) — мокаем его
+    work_conn = FakeConn([JOB, [POST_ROW], None])  # claim, load_rows, повторный claim -> None
+    monkeypatch.setattr('bot.exports.psycopg.connect', lambda *a, **k: work_conn)
+    count = exports.process_pending_exports('test-token', None)
     assert count == 1
     assert sent[0][0] == 777
     assert sent[0][1] == 'posts.csv'
     assert 'Пост' in sent[0][2].decode('utf-8')
     # помечен done
-    sql = ' '.join(call[0] for cur in conn.cursors for call in cur.calls)
+    sql = ' '.join(call[0] for cur in work_conn.cursors for call in cur.calls)
     assert "status='done'" in sql
 
 
