@@ -95,6 +95,47 @@ def _load_channel(conn, channel_id: int) -> dict | None:
         return cur.fetchone()
 
 
+def _load_assets(conn, post_id: int) -> list[dict]:
+    with conn.cursor() as cur:
+        cur.execute('SELECT id,file_name,file_type,file_url,size_bytes FROM cd_content_assets WHERE post_id=%s ORDER BY created_at',
+                    (post_id,))
+        return cur.fetchall() or []
+
+
+def _asset_to_media(asset: dict) -> dict:
+    file_type = (asset.get('file_type') or '').lower()
+    if file_type.startswith('image/'):
+        return {'type': 'photo', 'media': asset['file_url']}
+    if file_type.startswith('video/'):
+        return {'type': 'video', 'media': asset['file_url']}
+    return {'type': 'document', 'media': asset['file_url']}
+
+
+def _send_media(telegram_request, token: str, assets: list[dict], text: str, buttons) -> int:
+    """Отправляет одно фото/видео/документ или медиагруппу. Возвращает message_id."""
+    media = [_asset_to_media(a) for a in assets]
+    if len(media) == 1:
+        item = media[0]
+        method = {'photo': 'sendPhoto', 'video': 'sendVideo', 'document': 'sendDocument'}[item['type']]
+        param = {'photo': 'photo', 'video': 'video', 'document': 'document'}[item['type']]
+        params = {param: item['media'], 'caption': text or '', 'parse_mode': 'HTML'}
+        if buttons:
+            params['reply_markup'] = json.dumps({'inline_keyboard': buttons})
+        result = telegram_request(token, method, params)
+        return (result.get('result') or {}).get('message_id')
+    # Медиагруппа: caption на первом элементе; кнопки в медиагруппе не поддерживаются.
+    payload = []
+    for i, item in enumerate(media):
+        entry = {'type': item['type'], 'media': item['media']}
+        if i == 0:
+            entry['caption'] = text or ''
+            entry['parse_mode'] = 'HTML'
+        payload.append(entry)
+    result = telegram_request(token, 'sendMediaGroup', {'media': json.dumps(payload)})
+    items = (result.get('result') or [])
+    return items[0].get('message_id') if items else None
+
+
 def _record_success(conn, post_id: int, message_id: int) -> None:
     with conn.cursor() as cur:
         cur.execute("""UPDATE cd_posts SET status='published',telegram_message_id=%s,published_at=now(),
@@ -147,18 +188,23 @@ def _publish_one(token: str, conn, post: dict) -> None:
         _record_final_error(conn, post['id'], 'Канал не найден или отключён')
         return
     try:
-        params = {
-            'chat_id': channel['telegram_chat_id'],
-            'text': post['text'] or '',
-            'parse_mode': 'HTML',
-        }
+        text = post['text'] or ''
         buttons = post.get('buttons') or []
-        if buttons:
-            params['reply_markup'] = json.dumps({'inline_keyboard': buttons})
-        result = _telegram_request(token, 'sendMessage', params)
-        if not result.get('ok'):
-            raise RuntimeError(f"Telegram API error: {result.get('description', 'unknown')}")
-        message_id = (result.get('result') or {}).get('message_id')
+        assets = _load_assets(conn, post['id'])
+        if assets:
+            message_id = _send_media(_telegram_request, token, assets, text, buttons)
+        else:
+            params = {
+                'chat_id': channel['telegram_chat_id'],
+                'text': text,
+                'parse_mode': 'HTML',
+            }
+            if buttons:
+                params['reply_markup'] = json.dumps({'inline_keyboard': buttons})
+            result = _telegram_request(token, 'sendMessage', params)
+            if not result.get('ok'):
+                raise RuntimeError(f"Telegram API error: {result.get('description', 'unknown')}")
+            message_id = (result.get('result') or {}).get('message_id')
         _record_success(conn, post['id'], message_id)
         logger.info('published post %s -> channel %s (msg %s)', post['id'], channel['telegram_chat_id'], message_id)
     except RuntimeError as exc:

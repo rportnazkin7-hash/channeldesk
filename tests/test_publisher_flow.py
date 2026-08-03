@@ -4,6 +4,7 @@
 тело корутины никогда не выполнялось, посты вечно висели в scheduled без ошибок.
 """
 import asyncio
+import json
 
 import pytest
 
@@ -144,3 +145,52 @@ def test_final_error_records_and_notifies(monkeypatch):
     assert 'cd_publish_attempts' in sql
     assert len(notified) == 1
     assert 'HTTP 400' in notified[0][1]
+
+
+def test_publish_with_single_photo(monkeypatch):
+    sent = []
+
+    def fake_telegram(token, method, params):
+        sent.append((method, params))
+        return {'ok': True, 'result': {'message_id': 888}}
+
+    asset = {'id': 1, 'file_name': 'pic.png', 'file_type': 'image/png',
+             'file_url': 'https://x.supabase.co/storage/v1/object/public/channeldesk-assets/3/abc.png',
+             'size_bytes': 1000}
+    conn = FakeConn([[CANDIDATE], CLAIMED, CHANNEL, [asset]])
+    monkeypatch.setattr('bot.publisher.psycopg.connect', lambda *a, **k: conn)
+    monkeypatch.setattr('bot.publisher._telegram_request', fake_telegram)
+
+    publisher.run_once()
+    assert len(sent) == 1
+    method, params = sent[0]
+    assert method == 'sendPhoto'
+    assert params['photo'] == asset['file_url']
+    assert params['caption'] == 'hello <b>world</b>'
+    assert 'reply_markup' in params  # кнопки при одиночном медиа
+
+
+def test_publish_with_media_group(monkeypatch):
+    sent = []
+
+    def fake_telegram(token, method, params):
+        sent.append((method, params))
+        return {'ok': True, 'result': [{'message_id': 1}, {'message_id': 2}]}
+
+    assets = [
+        {'id': 1, 'file_name': 'a.png', 'file_type': 'image/png', 'file_url': 'https://x/a.png', 'size_bytes': 1},
+        {'id': 2, 'file_name': 'b.mp4', 'file_type': 'video/mp4', 'file_url': 'https://x/b.mp4', 'size_bytes': 1},
+        {'id': 3, 'file_name': 'c.pdf', 'file_type': 'application/pdf', 'file_url': 'https://x/c.pdf', 'size_bytes': 1},
+    ]
+    conn = FakeConn([[CANDIDATE], CLAIMED, CHANNEL, assets])
+    monkeypatch.setattr('bot.publisher.psycopg.connect', lambda *a, **k: conn)
+    monkeypatch.setattr('bot.publisher._telegram_request', fake_telegram)
+
+    publisher.run_once()
+    assert len(sent) == 1
+    method, params = sent[0]
+    assert method == 'sendMediaGroup'
+    media = json.loads(params['media'])
+    assert [m['type'] for m in media] == ['photo', 'video', 'document']
+    assert media[0]['caption'] == 'hello <b>world</b>'  # caption только на первом
+    assert 'caption' not in media[1]
