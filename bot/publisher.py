@@ -74,14 +74,14 @@ def _claim_posts(conn, now_iso: str) -> list[dict]:
     """
     rows = []
     with conn.cursor() as cur:
-        cur.execute("""SELECT id,workspace_id,channel_id,text,publish_key,attempt_count
-        FROM cd_posts WHERE status='scheduled' AND scheduled_at<=%s
-        OR status='publishing'""", (now_iso,))
+        cur.execute("""SELECT id,workspace_id,channel_id,text,publish_key,attempt_count,telegram_message_id
+        FROM cd_posts WHERE (status='scheduled' AND scheduled_at<=%s) OR status='publishing'
+        ORDER BY scheduled_at NULLS LAST, id""", (now_iso,))
         candidates = cur.fetchall()
         for post in candidates:
             cur.execute("""UPDATE cd_posts SET status='publishing',attempt_count=attempt_count+1,updated_at=now()
             WHERE id=%s AND status IN ('scheduled','publishing') AND attempt_count<%s
-            RETURNING id,workspace_id,channel_id,text,publish_key,attempt_count""",
+            RETURNING id,workspace_id,channel_id,text,publish_key,attempt_count,telegram_message_id""",
                         (post['id'], MAX_ATTEMPTS))
             claimed = cur.fetchone()
             if claimed:
@@ -137,6 +137,11 @@ def _notify_owner(token: str, post_id: int, title: str, error_text: str) -> None
 
 
 def _publish_one(token: str, conn, post: dict) -> None:
+    # Защита от двойной отправки: если сообщение уже было отправлено ранее
+    # (например, после потери соединения), не отправляем повторно.
+    if post.get('telegram_message_id'):
+        _record_success(conn, post['id'], post['telegram_message_id'])
+        return
     channel = _load_channel(conn, post['channel_id']) if post.get('channel_id') else None
     if not channel:
         _record_final_error(conn, post['id'], 'Канал не найден или отключён')
