@@ -1,21 +1,54 @@
 from __future__ import annotations
-"""Генерация файлов экспорта (CSV/XLSX/PDF) из БД и отправка через aiogram.
+"""Генерация файлов экспорта (CSV/XLSX/PDF) из БД и отправка через Telegram.
 
 Используется publisher-циклом: находит pending-задания в cd_exports,
 генерирует файл, отправляет документом в Telegram пользователю, помечает done.
+Отправка — синхронный urllib multipart (надёжно в потоке asyncio.to_thread,
+в отличие от aiogram Bot + asyncio.run внутри потока).
 """
 import csv
 import io
+import json
 import logging
+import os
+import uuid
 from datetime import datetime
 from pathlib import Path
-
-from aiogram import Bot
-from aiogram.types import BufferedInputFile
+from urllib.request import Request, urlopen
 
 logger = logging.getLogger('channeldesk.exports')
 
 FONTS_DIR = Path(__file__).resolve().parents[1] / 'assets' / 'fonts'
+TELEGRAM_API = 'https://api.telegram.org'
+
+
+def _fmt(dt) -> str:
+    if not dt:
+        return ''
+    if isinstance(dt, datetime):
+        return dt.strftime('%Y-%m-%d %H:%M')
+    return str(dt)
+
+
+def _send_document(token: str, chat_id: int, filename: str, data: bytes, caption: str) -> None:
+    """Отправляет документ через Telegram Bot API (multipart/form-data, синхронно)."""
+    boundary = '----channeldesk' + uuid.uuid4().hex
+    body = io.BytesIO()
+    for name, value in (('chat_id', str(chat_id)), ('caption', caption)):
+        body.write(f'--{boundary}\r\n'.encode())
+        body.write(f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode())
+        body.write(f'{value}\r\n'.encode())
+    body.write(f'--{boundary}\r\n'.encode())
+    body.write(f'Content-Disposition: form-data; name="document"; filename="{filename}"\r\n'.encode())
+    body.write(b'Content-Type: application/octet-stream\r\n\r\n')
+    body.write(data)
+    body.write(f'\r\n--{boundary}--\r\n'.encode())
+    req = Request(f'{TELEGRAM_API}/bot{token}/sendDocument', data=body.getvalue(), method='POST',
+                  headers={'Content-Type': f'multipart/form-data; boundary={boundary}'})
+    with urlopen(req, timeout=120) as resp:
+        payload = json.loads(resp.read().decode('utf-8'))
+    if not payload.get('ok'):
+        raise RuntimeError(f"Telegram API error: {payload.get('description', 'unknown')}")
 
 
 def _fmt(dt) -> str:
@@ -155,16 +188,8 @@ def process_pending_exports(token: str, conn) -> int:
             break
         try:
             data, filename, mime = _generate_file(conn, job['kind'], job['format'], job['workspace_id'])
-            bot = Bot(token=token)
-            try:
-                import asyncio
-                asyncio.run(bot.send_document(
-                    chat_id=job['telegram_id'],
-                    document=BufferedInputFile(data, filename=filename),
-                    caption=f'ChannelDesk: экспорт «{job["kind"]}»',
-                ))
-            finally:
-                bot.session.close()
+            _send_document(token, job['telegram_id'], filename, data,
+                           f'ChannelDesk: экспорт «{job["kind"]}» ({job["format"]})')
             with conn.cursor() as cur:
                 cur.execute("UPDATE cd_exports SET status='done',completed_at=now() WHERE id=%s", (job['id'],))
             processed += 1

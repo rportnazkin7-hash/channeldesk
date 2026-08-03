@@ -75,18 +75,10 @@ def test_generate_pdf_bytes():
 def test_process_pending_exports_sends_document(monkeypatch):
     sent = []
 
-    class FakeBot:
-        def __init__(self, token):
-            self.session = SimpleSession()
+    def fake_send_document(token, chat_id, filename, data, caption):
+        sent.append((chat_id, filename, data))
 
-        async def send_document(self, chat_id, document, caption=None):
-            sent.append((chat_id, document.filename, document.data))
-
-    class SimpleSession:
-        def close(self):
-            pass
-
-    monkeypatch.setattr('bot.exports.Bot', FakeBot)
+    monkeypatch.setattr('bot.exports._send_document', fake_send_document)
     # порядок: claim fetchone -> JOB; _load_rows fetchall -> [POST_ROW]; второй claim fetchone -> None
     conn = FakeConn([JOB, [POST_ROW], None])
     count = exports.process_pending_exports('test-token', conn)
@@ -97,3 +89,31 @@ def test_process_pending_exports_sends_document(monkeypatch):
     # помечен done
     sql = ' '.join(call[0] for cur in conn.cursors for call in cur.calls)
     assert "status='done'" in sql
+
+
+def test_send_document_multipart(monkeypatch):
+    """Проверяем, что _send_document шлёт multipart с файлом и получает ok."""
+    received = {}
+
+    class FakeResp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self):
+            return b'{"ok": true, "result": {"message_id": 1}}'
+
+    def fake_urlopen(req, timeout):
+        received['url'] = req.full_url
+        received['content_type'] = req.headers['Content-type']
+        received['body'] = req.data
+        return FakeResp()
+
+    monkeypatch.setattr('bot.exports.urlopen', fake_urlopen)
+    exports._send_document('TOKEN', 777, 'posts.csv', b'\xef\xbb\xbfID;', 'caption')
+    assert received['url'].startswith('https://api.telegram.org/botTOKEN/sendDocument')
+    assert 'multipart/form-data; boundary=' in received['content_type']
+    assert b'posts.csv' in received['body']
+    assert b'ID;' in received['body']
