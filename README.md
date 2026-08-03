@@ -29,6 +29,24 @@ Entry point: bot/main.py
 Requirements: requirements.txt
 ```
 
+## Publisher (очередь публикаций, Этап B)
+
+Отдельный worker `bot/publisher.py` публикует посты со статусом `scheduled`
+в подключённые каналы (не позднее ~60 секунд после срока).
+
+На Bothost добавьте второй worker:
+
+```text
+Runtime: Python
+Type: Worker
+Python: 3.11
+Entry point: bot/publisher.py
+Requirements: requirements.txt
+```
+
+Переменные окружения те же (`BOT_TOKEN`, `DATABASE_URL`, `ADMIN_IDS` — для
+уведомлений владельца при окончательной ошибке публикации).
+
 ## Проверка
 
 ```bash

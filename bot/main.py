@@ -5,6 +5,7 @@ from aiogram import Bot,Dispatcher,Router
 from aiogram.enums import ChatMemberStatus,ChatType
 from aiogram.filters import CommandStart
 from aiogram.types import ChatMemberUpdated,InlineKeyboardButton,InlineKeyboardMarkup,Message,WebAppInfo
+from bot.db import db_url
 
 router=Router()
 
@@ -16,11 +17,6 @@ def extract_invite_token(text:str)->str|None:
     prefix='invite_'
     if rest.startswith(prefix): return rest[len(prefix):] or None
     return None
-
-def db_url()->str:
-    value=os.getenv('DATABASE_URL','').strip()
-    if not value: raise RuntimeError('DATABASE_URL is required')
-    return value.replace('postgresql+psycopg://','postgresql://').replace('postgresql+asyncpg://','postgresql://')
 
 def save_connection(event:ChatMemberUpdated,connected:bool)->None:
     member=event.new_chat_member
