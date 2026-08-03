@@ -177,6 +177,56 @@ def _notify_owner(token: str, post_id: int, title: str, error_text: str) -> None
             logger.exception('Failed to notify owner %s', chat_id)
 
 
+def _claim_task_reminders(conn) -> list[dict]:
+    """Забирает задачи, у которых наступил remind_at и напоминание ещё не отправлено."""
+    rows = []
+    with conn.cursor() as cur:
+        cur.execute("""SELECT id,title,description,assignee_id,due_at
+        FROM cd_tasks WHERE remind_at<=now() AND reminded=false
+        ORDER BY remind_at LIMIT 50""")
+        candidates = cur.fetchall()
+        for task in candidates:
+            cur.execute("""UPDATE cd_tasks SET reminded=true,updated_at=now()
+            WHERE id=%s AND reminded=false RETURNING id,title,description,assignee_id,due_at""", (task['id'],))
+            claimed = cur.fetchone()
+            if claimed:
+                rows.append(claimed)
+    return rows
+
+
+def _load_user_telegram_ids(conn, assignee_id: int | None) -> list[int]:
+    ids = []
+    for raw in os.getenv('ADMIN_IDS', '').split(','):
+        raw = raw.strip()
+        if raw.isdigit():
+            ids.append(int(raw))
+    if assignee_id is not None:
+        with conn.cursor() as cur:
+            cur.execute('SELECT telegram_id FROM cd_users WHERE id=%s', (assignee_id,))
+            row = cur.fetchone()
+            if row:
+                ids.append(row['telegram_id'])
+    return list(dict.fromkeys(ids))
+
+
+def _send_task_reminders(token: str, conn) -> int:
+    tasks = _claim_task_reminders(conn)
+    sent = 0
+    for task in tasks:
+        text = f'⏰ Напоминание: «{task["title"]}»'
+        if task.get('due_at'):
+            text += f'\nСрок: {task["due_at"].strftime("%d.%m.%Y %H:%M")}'
+        if task.get('description'):
+            text += f'\n{task["description"][:200]}'
+        for chat_id in _load_user_telegram_ids(conn, task.get('assignee_id')):
+            try:
+                _telegram_request(token, 'sendMessage', {'chat_id': chat_id, 'text': text})
+                sent += 1
+            except Exception:
+                logger.exception('Failed to send reminder for task %s', task['id'])
+    return sent
+
+
 def _publish_one(token: str, conn, post: dict) -> None:
     # Защита от двойной отправки: если сообщение уже было отправлено ранее
     # (например, после потери соединения), не отправляем повторно.
@@ -232,6 +282,8 @@ def run_once() -> int:
         posts = _claim_posts(conn, datetime_now_iso())
         for post in posts:
             _publish_one(token, conn, post)
+        # напоминания о задачах
+        _send_task_reminders(token, conn)
         conn.commit()
         return len(posts)
     finally:
