@@ -1,9 +1,0 @@
-{
-  "rewrites": [{ "source": "/api/(.*)", "destination": "/api/index.py" }],
-  "buildCommand": "npm run build",
-  "outputDirectory": "dist",
-  "headers": [
-    { "source": "/", "headers": [{ "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" }] },
-    { "source": "/index.html", "headers": [{ "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" }] }
-  ]
-}
