@@ -284,6 +284,9 @@ def run_once() -> int:
             _publish_one(token, conn, post)
         # напоминания о задачах
         _send_task_reminders(token, conn)
+        # задания экспорта: файл генерируется и отправляется ботом в Telegram
+        from bot.exports import process_pending_exports
+        process_pending_exports(token, conn)
         conn.commit()
         return len(posts)
     finally:
