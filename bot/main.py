@@ -6,6 +6,7 @@ from aiogram.enums import ChatMemberStatus,ChatType
 from aiogram.filters import CommandStart
 from aiogram.types import ChatMemberUpdated,InlineKeyboardButton,InlineKeyboardMarkup,Message,WebAppInfo
 from bot.db import db_url
+from bot import publisher
 
 router=Router()
 
@@ -69,6 +70,14 @@ async def main():
     token=os.getenv('BOT_TOKEN','').strip()
     if not token: raise RuntimeError('BOT_TOKEN is required')
     bot=Bot(token);dp=Dispatcher();dp.include_router(router)
-    await dp.start_polling(bot,allowed_updates=['message','my_chat_member'])
+    # Фоновый publisher-цикл в том же процессе (Bothost: один Python Worker).
+    # Отдельное соединение на цикл — безопасно с aiogram.
+    publisher_task=asyncio.create_task(publisher.loop())
+    try:
+        await dp.start_polling(bot,allowed_updates=['message','my_chat_member'])
+    finally:
+        publisher_task.cancel()
+        try: await publisher_task
+        except (asyncio.CancelledError, Exception): pass
 
 if __name__=='__main__': asyncio.run(main())

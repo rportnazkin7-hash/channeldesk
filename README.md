@@ -31,21 +31,20 @@ Requirements: requirements.txt
 
 ## Publisher (очередь публикаций, Этап B)
 
-Отдельный worker `bot/publisher.py` публикует посты со статусом `scheduled`
-в подключённые каналы (не позднее ~60 секунд после срока).
+`bot/publisher.py` публикует посты со статусом `scheduled` в подключённые каналы
+(не позднее ~60 секунд после срока). Publisher **запускается автоматически внутри
+основного бота** (`bot/main.py` создаёт фоновый цикл через `asyncio.create_task`),
+отдельный worker на Bothost не требуется.
 
-На Bothost добавьте второй worker:
+Достаточно одной настройки Bothost:
 
 ```text
 Runtime: Python
 Type: Worker
 Python: 3.11
-Entry point: bot/publisher.py
+Entry point: bot/main.py
 Requirements: requirements.txt
 ```
-
-Переменные окружения те же (`BOT_TOKEN`, `DATABASE_URL`, `ADMIN_IDS` — для
-уведомлений владельца при окончательной ошибке публикации).
 
 ## Проверка
 
