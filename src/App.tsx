@@ -6,9 +6,10 @@ const ROLE_LABEL:Record<string,string>={owner:'Владелец',admin:'Адми
 
 function errorHint(msg:string):string{
  if(msg.includes('401')) return 'Telegram-авторизация не получена. Откройте приложение через Telegram (кнопка WebApp у @channel_desk_bot), а не через браузер.'
- if(msg.includes('503')) return 'Серверная служба недоступна: проверьте DATABASE_URL на Vercel.'
+ if(msg.includes('503')) return 'Серверная служба недоступна: проверьте DATABASE_URL на Vercel и состояние БД Supabase.'
  if(msg.includes('500')) return 'Внутренняя ошибка сервера. Проверьте журналы Vercel и состояние миграций БД.'
  if(msg.includes('429')) return 'Слишком много запросов. Подождите минуту и обновите экран.'
+ if(msg.includes('Нет соединения')||msg.includes('не ответил')) return 'Проверьте интернет-соединение и обновите экран (кнопка со стрелками вверху).'
  return ''
 }
 
