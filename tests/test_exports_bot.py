@@ -78,6 +78,26 @@ def test_generate_pdf_bytes():
     assert mime == 'application/pdf'
 
 
+def test_finance_export_filters_period():
+    tx = {'id': 2, 'type': 'income', 'amount': 300, 'currency': 'RUB', 'category': 'advertising',
+          'description': 'Оплата', 'occurred_at': None}
+    conn = FakeConn([[tx]])
+    rows = exports._load_rows(conn, 'finance', 3, 2026, 8)
+    assert rows == [tx]
+    sql, params = conn.cursors[0].calls[0]
+    assert 'make_date' in sql
+    assert params == (3, 2026, 8, 2026, 8)
+
+
+def test_generate_finance_pdf_bytes():
+    tx = {'id': 2, 'type': 'expense', 'amount': 300, 'currency': 'RUB', 'category': 'services',
+          'description': 'Сервис', 'occurred_at': None}
+    data, filename, mime = exports._generate_file(FakeConn([[tx]]), 'finance', 'pdf', 3)
+    assert filename == 'finance.pdf'
+    assert data[:4] == b'%PDF'
+    assert mime == 'application/pdf'
+
+
 def test_process_pending_exports_sends_document(monkeypatch):
     sent = []
 

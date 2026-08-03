@@ -63,7 +63,8 @@ def _fmt(dt) -> str:
     return str(dt)
 
 
-def _load_rows(conn, kind: str, workspace_id: int) -> list[dict]:
+def _load_rows(conn, kind: str, workspace_id: int, period_year: int | None = None,
+               period_month: int | None = None) -> list[dict]:
     with conn.cursor() as cur:
         if kind == 'posts':
             cur.execute("""SELECT p.*, c.title AS channel_title FROM cd_posts p
@@ -74,6 +75,12 @@ def _load_rows(conn, kind: str, workspace_id: int) -> list[dict]:
             FROM cd_ad_bookings b LEFT JOIN cd_advertisers a ON a.id=b.advertiser_id
             LEFT JOIN cd_channels c ON c.id=b.channel_id
             WHERE b.workspace_id=%s ORDER BY b.id DESC""", (workspace_id,))
+        elif period_year is not None and period_month is not None:
+            cur.execute("""SELECT * FROM cd_finance_transactions WHERE workspace_id=%s
+            AND occurred_at >= make_date(%s,%s,1)
+            AND occurred_at < make_date(%s,%s,1) + interval '1 month'
+            ORDER BY occurred_at DESC, id DESC""",
+                        (workspace_id, period_year, period_month, period_year, period_month))
         else:
             cur.execute("""SELECT * FROM cd_finance_transactions WHERE workspace_id=%s
             ORDER BY occurred_at DESC, id DESC""", (workspace_id,))
@@ -138,45 +145,65 @@ def _xlsx_bytes(rows: list[dict], kind: str) -> bytes:
     return buffer.getvalue()
 
 
-def _pdf_bytes(rows: list[dict]) -> bytes:
+def _pdf_bytes(rows: list[dict], kind: str = 'posts') -> bytes:
+    """Собирает PDF именно для выбранного типа экспорта, а не один вечный PDF постов."""
     from fpdf import FPDF
-    pdf = FPDF()
+
+    pdf = FPDF(orientation='L' if kind in ('bookings', 'finance') else 'P')
     pdf.add_font('DejaVu', '', str(FONTS_DIR / 'DejaVuSans.ttf'))
     pdf.add_font('DejaVu', 'B', str(FONTS_DIR / 'DejaVuSans-Bold.ttf'))
     pdf.add_page()
     pdf.set_font('DejaVu', 'B', 14)
-    pdf.cell(0, 10, 'ChannelDesk - Публикации', new_x='LMARGIN', new_y='NEXT')
+    titles = {'posts': 'Публикации', 'bookings': 'Брони', 'finance': 'Финансы'}
+    pdf.cell(0, 10, f'ChannelDesk - {titles.get(kind, kind)}', new_x='LMARGIN', new_y='NEXT')
     pdf.set_font('DejaVu', 'B', 8)
-    pdf.cell(10, 7, 'ID', border=1)
-    pdf.cell(60, 7, 'Заголовок', border=1)
-    pdf.cell(30, 7, 'Статус', border=1)
-    pdf.cell(40, 7, 'Канал', border=1)
-    pdf.cell(50, 7, 'Запланировано', border=1, new_x='LMARGIN', new_y='NEXT')
+
+    if kind == 'finance':
+        headers = ['ID', 'Тип', 'Сумма', 'Валюта', 'Категория', 'Описание', 'Дата']
+        widths = [12, 24, 30, 18, 34, 116, 38]
+        values = lambda row: [row.get('id'), 'Доход' if row.get('type') == 'income' else 'Расход',
+                              row.get('amount'), row.get('currency') or '', row.get('category') or '',
+                              row.get('description') or '', _fmt(row.get('occurred_at'))]
+    elif kind == 'bookings':
+        headers = ['ID', 'Рекламодатель', 'Канал', 'Формат', 'Стоимость', 'Статус', 'Оплата', 'Публикация']
+        widths = [12, 62, 50, 28, 30, 30, 30, 45]
+        values = lambda row: [row.get('id'), row.get('advertiser_name') or '', row.get('channel_title') or '',
+                              row.get('format') or '', row.get('cost'), row.get('status') or '',
+                              row.get('payment_status') or '', _fmt(row.get('publish_at'))]
+    else:
+        headers = ['ID', 'Заголовок', 'Статус', 'Канал', 'Запланировано']
+        widths = [12, 68, 34, 45, 48]
+        values = lambda row: [row.get('id'), row.get('title') or '', row.get('status') or '',
+                              row.get('channel_title') or '', _fmt(row.get('scheduled_at'))]
+
+    for header, width in zip(headers, widths):
+        pdf.cell(width, 7, header, border=1)
+    pdf.ln()
     pdf.set_font('DejaVu', '', 8)
-    for p in rows:
-        pdf.cell(10, 7, str(p['id']), border=1)
-        pdf.cell(60, 7, (p.get('title') or '')[:40], border=1)
-        pdf.cell(30, 7, (p.get('status') or ''), border=1)
-        pdf.cell(40, 7, (p.get('channel_title') or '')[:25], border=1)
-        pdf.cell(50, 7, _fmt(p.get('scheduled_at')), border=1, new_x='LMARGIN', new_y='NEXT')
+    for row in rows:
+        for value, width in zip(values(row), widths):
+            text = '' if value is None else str(value)
+            pdf.cell(width, 7, text[:70], border=1)
+        pdf.ln()
     return pdf.output()
 
 
-def _generate_file(conn, kind: str, fmt: str, workspace_id: int) -> tuple[bytes, str, str]:
-    rows = _load_rows(conn, kind, workspace_id)
+def _generate_file(conn, kind: str, fmt: str, workspace_id: int, period_year: int | None = None,
+                   period_month: int | None = None) -> tuple[bytes, str, str]:
+    rows = _load_rows(conn, kind, workspace_id, period_year, period_month)
     filename = f'{kind}.{fmt}'
     if fmt == 'csv':
         return _csv_bytes(rows, kind), filename, 'text/csv; charset=utf-8'
     if fmt == 'xlsx':
         return _xlsx_bytes(rows, kind), filename, \
             'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-    return _pdf_bytes(rows), filename, 'application/pdf'
+    return _pdf_bytes(rows, kind), filename, 'application/pdf'
 
 
 def _claim_export(conn) -> dict | None:
     """Забирает одно pending-задание. Простой SELECT (publisher один, гонок нет)."""
     with conn.cursor() as cur:
-        cur.execute("""SELECT id,workspace_id,telegram_id,kind,format FROM cd_exports
+        cur.execute("""SELECT id,workspace_id,telegram_id,kind,format,period_year,period_month FROM cd_exports
         WHERE status='pending' ORDER BY created_at LIMIT 1""")
         job = cur.fetchone()
         if job:
@@ -203,7 +230,9 @@ def process_pending_exports(token: str, conn) -> int:
             if not job:
                 break
             try:
-                data, filename, mime = _generate_file(work_conn, job['kind'], job['format'], job['workspace_id'])
+                data, filename, mime = _generate_file(
+                    work_conn, job['kind'], job['format'], job['workspace_id'],
+                    job.get('period_year'), job.get('period_month'))
                 _send_document(token, job['telegram_id'], filename, data,
                                f'ChannelDesk: экспорт «{job["kind"]}» ({job["format"]})')
                 with work_conn.cursor() as cur:
