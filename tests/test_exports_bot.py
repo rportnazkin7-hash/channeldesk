@@ -98,6 +98,16 @@ def test_generate_finance_pdf_bytes():
     assert mime == 'application/pdf'
 
 
+def test_generate_media_kit_pdf_bytes():
+    kit = {'id': 1, 'name': 'Медиакит', 'channel_title': 'Канал', 'description': 'Описание',
+           'stats': {'subscribers': 15000}, 'pricing': [{'format': 'post', 'price': 5000}],
+           'contacts': {'telegram': '@media'}, 'is_active': True}
+    data, filename, mime = exports._generate_file(FakeConn([[kit]]), 'media_kits', 'pdf', 3)
+    assert filename == 'media_kits.pdf'
+    assert data[:4] == b'%PDF'
+    assert mime == 'application/pdf'
+
+
 def test_process_pending_exports_sends_document(monkeypatch):
     sent = []
 

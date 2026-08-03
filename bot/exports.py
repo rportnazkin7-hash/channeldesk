@@ -75,6 +75,10 @@ def _load_rows(conn, kind: str, workspace_id: int, period_year: int | None = Non
             FROM cd_ad_bookings b LEFT JOIN cd_advertisers a ON a.id=b.advertiser_id
             LEFT JOIN cd_channels c ON c.id=b.channel_id
             WHERE b.workspace_id=%s ORDER BY b.id DESC""", (workspace_id,))
+        elif kind == 'media_kits':
+            cur.execute("""SELECT mk.*, c.title AS channel_title
+            FROM cd_media_kits mk LEFT JOIN cd_channels c ON c.id=mk.channel_id
+            WHERE mk.workspace_id=%s AND mk.is_active=true ORDER BY mk.name""", (workspace_id,))
         elif period_year is not None and period_month is not None:
             cur.execute("""SELECT * FROM cd_finance_transactions WHERE workspace_id=%s
             AND occurred_at >= make_date(%s,%s,1)
@@ -153,6 +157,55 @@ def _pdf_bytes(rows: list[dict], kind: str = 'posts') -> bytes:
     pdf.add_font('DejaVu', '', str(FONTS_DIR / 'DejaVuSans.ttf'))
     pdf.add_font('DejaVu', 'B', str(FONTS_DIR / 'DejaVuSans-Bold.ttf'))
     pdf.add_page()
+    if kind == 'media_kits':
+        for index, kit in enumerate(rows):
+            if index:
+                pdf.add_page()
+            pdf.set_font('DejaVu', 'B', 18)
+            pdf.cell(0, 11, kit.get('name') or 'Медиакит', new_x='LMARGIN', new_y='NEXT')
+            pdf.set_font('DejaVu', '', 10)
+            pdf.cell(0, 7, f"Канал: {kit.get('channel_title') or 'не указан'}",
+                     new_x='LMARGIN', new_y='NEXT')
+            pdf.ln(3)
+            if kit.get('description'):
+                pdf.set_font('DejaVu', 'B', 11)
+                pdf.cell(0, 7, 'О канале', new_x='LMARGIN', new_y='NEXT')
+                pdf.set_font('DejaVu', '', 10)
+                pdf.multi_cell(0, 6, str(kit['description']), new_x='LMARGIN', new_y='NEXT')
+            stats = kit.get('stats') or {}
+            if stats:
+                pdf.set_font('DejaVu', 'B', 11)
+                pdf.cell(0, 7, 'Статистика', new_x='LMARGIN', new_y='NEXT')
+                pdf.set_font('DejaVu', '', 10)
+                for key, value in stats.items():
+                    pdf.cell(0, 6, f'{key}: {value}', new_x='LMARGIN', new_y='NEXT')
+            pricing = kit.get('pricing') or []
+            if pricing:
+                pdf.set_font('DejaVu', 'B', 11)
+                pdf.cell(0, 7, 'Стоимость размещений', new_x='LMARGIN', new_y='NEXT')
+                pdf.set_font('DejaVu', '', 10)
+                for item in pricing:
+                    if isinstance(item, dict):
+                        fmt = item.get('format') or 'размещение'
+                        price = item.get('price', '')
+                        currency = item.get('currency') or 'RUB'
+                        pdf.cell(0, 6, f'{fmt}: {price} {currency}', new_x='LMARGIN', new_y='NEXT')
+                    else:
+                        pdf.cell(0, 6, str(item), new_x='LMARGIN', new_y='NEXT')
+            contacts = kit.get('contacts') or {}
+            if contacts:
+                pdf.set_font('DejaVu', 'B', 11)
+                pdf.cell(0, 7, 'Контакты', new_x='LMARGIN', new_y='NEXT')
+                pdf.set_font('DejaVu', '', 10)
+                for key, value in contacts.items():
+                    pdf.cell(0, 6, f'{key}: {value}', new_x='LMARGIN', new_y='NEXT')
+        if not rows:
+            pdf.set_font('DejaVu', 'B', 16)
+            pdf.cell(0, 10, 'ChannelDesk - Медиакиты', new_x='LMARGIN', new_y='NEXT')
+            pdf.set_font('DejaVu', '', 10)
+            pdf.cell(0, 7, 'Медиакитов пока нет.', new_x='LMARGIN', new_y='NEXT')
+        return pdf.output()
+
     pdf.set_font('DejaVu', 'B', 14)
     titles = {'posts': 'Публикации', 'bookings': 'Брони', 'finance': 'Финансы'}
     pdf.cell(0, 10, f'ChannelDesk - {titles.get(kind, kind)}', new_x='LMARGIN', new_y='NEXT')
