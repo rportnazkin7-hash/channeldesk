@@ -10,6 +10,7 @@ from bot import migrate, publisher
 
 logger=logging.getLogger('channeldesk.bot')
 router=Router()
+BOT_CODE_VERSION='e5c5696+diag'
 _publisher_task=None
 
 def extract_invite_token(text:str)->str|None:
@@ -58,9 +59,21 @@ async def status_cmd(message:Message):
         await message.answer('Нет доступа.'); return
     alive=_publisher_task is not None and not _publisher_task.done()
     db=db_url().split('@')[-1] if '@' in db_url() else '?'
+    # диагностика экспорта: есть ли таблица и сколько заданий ждут
+    export_info='n/a'
+    pending=0
+    try:
+        with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
+            cur.execute('SELECT count(*) FROM cd_exports WHERE status=%s',('pending',))
+            pending=cur.fetchone()[0]
+            export_info='✅ таблица есть'
+    except Exception as exc:
+        export_info=f'❌ таблицы нет: {str(exc)[:120]}'
     await message.answer(f'Publisher: {"✅ работает" if alive else "❌ не запущен"}\n'
                          f'Интервал: {publisher.POLL_INTERVAL} с\n'
-                         f'БД: {db}')
+                         f'БД: {db}\n'
+                         f'Экспорт: {export_info}, ожидают: {pending}\n'
+                         f'Код: {BOT_CODE_VERSION}')
 
 @router.message(CommandStart())
 async def start(message:Message):
