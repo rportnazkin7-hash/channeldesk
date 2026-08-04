@@ -36,8 +36,8 @@ TELEGRAM_API = 'https://api.telegram.org'
 LAST_RUN_AT: float = 0.0
 RUN_ERRORS: int = 0
 EXPORTS_RUNS: int = 0
-MTPROTO_RUNS: int = 0
-MTPROTO_LAST_RESULT: dict = {}
+BOT_ANALYTICS_RUNS: int = 0
+BOT_ANALYTICS_LAST_RESULT: dict = {}
 
 RETRYABLE_HTTP = {408, 429, 500, 502, 503, 504}
 
@@ -338,16 +338,16 @@ def run_once() -> int:
             _update_booking_statuses(conn)
         except Exception as exc:
             logger.exception('booking status update failed: %s', exc)
-        global EXPORTS_RUNS, MTPROTO_RUNS, MTPROTO_LAST_RESULT
+        global EXPORTS_RUNS, BOT_ANALYTICS_RUNS, BOT_ANALYTICS_LAST_RESULT
         EXPORTS_RUNS += 1
         try:
-            from bot.mtproto_analytics import run_sync_if_due
-            MTPROTO_LAST_RESULT = run_sync_if_due()
-            if MTPROTO_LAST_RESULT.get('ran'):
-                MTPROTO_RUNS += 1
+            from bot.bot_api_analytics import sync_member_counts
+            BOT_ANALYTICS_LAST_RESULT = sync_member_counts(token, conn)
+            if BOT_ANALYTICS_LAST_RESULT.get('ran'):
+                BOT_ANALYTICS_RUNS += 1
         except Exception as exc:
-            logger.exception('MTProto analytics failed: %s', exc)
-            MTPROTO_LAST_RESULT = {'enabled': True, 'ran': True, 'ok': 0, 'errors': [str(exc)[:300]]}
+            logger.exception('Bot API analytics failed: %s', exc)
+            BOT_ANALYTICS_LAST_RESULT = {'ran': True, 'ok': 0, 'errors': [str(exc)[:300]]}
         try:
             from bot.exports import process_pending_exports
             process_pending_exports(token, conn)

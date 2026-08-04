@@ -4,13 +4,13 @@ import psycopg
 from aiogram import Bot,Dispatcher,Router
 from aiogram.enums import ChatMemberStatus,ChatType
 from aiogram.filters import Command,CommandStart
-from aiogram.types import ChatMemberUpdated,InlineKeyboardButton,InlineKeyboardMarkup,Message,WebAppInfo
+from aiogram.types import ChatMemberUpdated,InlineKeyboardButton,InlineKeyboardMarkup,Message,MessageReactionCountUpdated,WebAppInfo
 from bot.db import db_url
 from bot import migrate, publisher
 
 logger=logging.getLogger('channeldesk.bot')
 router=Router()
-BOT_CODE_VERSION='mtproto-analytics'
+BOT_CODE_VERSION='bot-api-analytics'
 _process_started=time.time()
 _publisher_task=None
 
@@ -64,6 +64,7 @@ async def status_cmd(message:Message):
     db_hash=hashlib.sha256(db_url().encode()).hexdigest()[:10]
     # диагностика экспорта: есть ли таблица и сколько заданий ждут
     export_info='n/a'
+    recent=[]
     try:
         with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
             cur.execute("""SELECT status, count(*) FROM cd_exports GROUP BY status""")
@@ -75,18 +76,13 @@ async def status_cmd(message:Message):
     except Exception as exc:
         export_info=f'❌ таблицы нет: {str(exc)[:120]}'
     recent_txt = '\n'.join(f'  #{r[0]}.{r[1]} → {r[2]}' + (f' ({str(r[3])[:80]})' if r[3] else '') for r in recent) or '  (нет)'
-    mt = publisher.MTPROTO_LAST_RESULT
-    if not mt:
-        mt_info = 'не запускался'
-    elif not mt.get('enabled'):
-        mt_info = 'выключен: нет MT_PROTO_* переменных'
-    else:
-        mt_info = f"синхронизаций: {publisher.MTPROTO_RUNS}, каналов: {mt.get('ok', 0)}, ошибок: {len(mt.get('errors', []))}"
+    bot_analytics = publisher.BOT_ANALYTICS_LAST_RESULT
+    bot_analytics_info = f"синхронизаций: {publisher.BOT_ANALYTICS_RUNS}, каналов: {bot_analytics.get('ok', 0)}, ошибок: {len(bot_analytics.get('errors', []))}" if bot_analytics else 'не запускалась'
     last_run = publisher.LAST_RUN_AT
     last_run_txt = f'{int(time.time()-last_run)} с назад' if last_run else 'никогда'
     # проверка библиотек, необходимых для экспорта
     libs = {}
-    for lib in ('openpyxl', 'fpdf', 'aiogram', 'psycopg', 'telethon'):
+    for lib in ('openpyxl', 'fpdf', 'aiogram', 'psycopg'):
         try:
             mod = __import__(lib)
             libs[lib] = getattr(mod, '__version__', '?')
@@ -98,9 +94,9 @@ async def status_cmd(message:Message):
                          f'БД: {db}\n'
                          f'БД-хэш: {db_hash}\n'
                          f'Цикл: последний {last_run_txt}, ошибок: {publisher.RUN_ERRORS}, экспорт-вызовов: {publisher.EXPORTS_RUNS}\n'
-                         f'MTProto: {mt_info}\n'
+                         f'Bot API аналитика: {bot_analytics_info}\n'
                          f'Процесс: PID {os.getpid()}, uptime {uptime} с\n'
-                         f'Библиотеки: openpyxl {libs["openpyxl"]}, fpdf {libs["fpdf"]}, aiogram {libs["aiogram"]}, telethon {libs["telethon"]}\n'
+                         f'Библиотеки: openpyxl {libs["openpyxl"]}, fpdf {libs["fpdf"]}, aiogram {libs["aiogram"]}\n'
                          f'Экспорты: {export_info}\n'
                          f'Последние:\n{recent_txt}\n'
                          f'Код: {BOT_CODE_VERSION}')
@@ -110,6 +106,21 @@ async def start(message:Message):
     url=os.getenv('MINI_APP_URL','').strip(); keyboard=None
     if url: keyboard=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text='Открыть ChannelDesk',web_app=WebAppInfo(url=url))]])
     await message.answer('ChannelDesk — каналы, реклама и команда в одном рабочем пространстве.',reply_markup=keyboard)
+
+@router.channel_post()
+async def channel_post_received(message: Message):
+    from bot.bot_api_analytics import save_channel_post
+    await asyncio.to_thread(save_channel_post, message)
+
+@router.edited_channel_post()
+async def channel_post_edited(message: Message):
+    from bot.bot_api_analytics import save_channel_post
+    await asyncio.to_thread(save_channel_post, message)
+
+@router.message_reaction_count()
+async def channel_reactions_updated(update: MessageReactionCountUpdated):
+    from bot.bot_api_analytics import save_reaction_update
+    await asyncio.to_thread(save_reaction_update, update)
 
 @router.my_chat_member()
 async def bot_membership_changed(event:ChatMemberUpdated):
@@ -136,7 +147,7 @@ async def main():
     global _publisher_task
     _publisher_task=asyncio.create_task(publisher.loop())
     try:
-        await dp.start_polling(bot,allowed_updates=['message','my_chat_member'])
+        await dp.start_polling(bot,allowed_updates=['message','my_chat_member','channel_post','edited_channel_post','message_reaction_count'])
     finally:
         _publisher_task.cancel()
         try: await _publisher_task
