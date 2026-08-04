@@ -171,6 +171,47 @@ def _record_final_error(conn, post_id: int, error_text: str) -> None:
                     (post_id, error_text))
 
 
+def _claim_delete_jobs(conn) -> list[dict]:
+    jobs: list[dict] = []
+    with conn.cursor() as cur:
+        cur.execute("""SELECT id,workspace_id,post_id,telegram_chat_id,telegram_message_id
+        FROM cd_telegram_delete_jobs WHERE status='pending' ORDER BY created_at LIMIT 20""")
+        candidates = cur.fetchall() or []
+        for job in candidates:
+            cur.execute("""UPDATE cd_telegram_delete_jobs SET status='processing'
+            WHERE id=%s AND status='pending'
+            RETURNING id,workspace_id,post_id,telegram_chat_id,telegram_message_id""", (job['id'],))
+            claimed = cur.fetchone()
+            if claimed:
+                jobs.append(claimed)
+    return jobs
+
+
+def _process_delete_jobs(token: str, conn) -> int:
+    processed = 0
+    for job in _claim_delete_jobs(conn):
+        try:
+            result = _telegram_request(token, 'deleteMessage', {
+                'chat_id': job['telegram_chat_id'],
+                'message_id': job['telegram_message_id'],
+            })
+            if not result.get('ok'):
+                raise RuntimeError(result.get('description', 'Telegram не удалил сообщение'))
+            with conn.cursor() as cur:
+                cur.execute("""UPDATE cd_telegram_delete_jobs SET status='done',completed_at=now(),error_text=NULL
+                WHERE id=%s""", (job['id'],))
+                cur.execute("""UPDATE cd_posts SET status='cancelled',last_error=NULL,updated_at=now()
+                WHERE id=%s AND workspace_id=%s""", (job['post_id'], job['workspace_id']))
+            processed += 1
+        except Exception as exc:  # noqa: BLE001
+            error_text = str(exc)[:500]
+            with conn.cursor() as cur:
+                cur.execute("""UPDATE cd_telegram_delete_jobs SET status='failed',error_text=%s,completed_at=now()
+                WHERE id=%s""", (error_text, job['id']))
+            logger.exception('Telegram delete job %s failed: %s', job['id'], error_text)
+    return processed
+
+
 def _fail_all_pending_exports(conn, error_text: str) -> None:
     """Если обработка экспорта упала целиком — помечаем все pending как failed."""
     try:
@@ -397,6 +438,10 @@ def run_once() -> int:
                 _notify_booking_transition(token, conn, transition)
         except Exception as exc:
             logger.exception('booking status update failed: %s', exc)
+        try:
+            _process_delete_jobs(token, conn)
+        except Exception as exc:
+            logger.exception('Telegram delete jobs failed: %s', exc)
         global EXPORTS_RUNS, BOT_ANALYTICS_RUNS, BOT_ANALYTICS_LAST_RESULT
         EXPORTS_RUNS += 1
         try:
