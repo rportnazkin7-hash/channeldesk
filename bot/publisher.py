@@ -181,31 +181,89 @@ def _fail_all_pending_exports(conn, error_text: str) -> None:
         pass
 
 
-AUTO_CANCEL_OVERDUE_DAYS = 3  # неоплаченная бронь отменяется через 3 дня после начала
+DEFAULT_AUTO_CANCEL_OVERDUE_DAYS = 3
 
 
-def _update_booking_statuses(conn) -> None:
-    """Автоматический жизненный цикл размещений (по времени, раз в цикл).
+def _update_booking_statuses(conn) -> list[dict]:
+    """Автоматический жизненный цикл размещений.
 
-    - оплаченная confirmed: publish_at наступил → active
-    - неоплаченная (requested/confirmed): publish_at наступил → overdue
-    - активная: delete_at наступил → done
-    - overdue: прошло > AUTO_CANCEL_OVERDUE_DAYS с publish_at → cancelled
+    Возвращает только реальные переходы active/overdue/cancelled — по ним
+    publisher отправляет уведомления владельцу и админам рабочего пространства.
+    Число дней до отмены берётся из cd_workspaces.settings.
     """
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timezone
     now = datetime.now(timezone.utc)
-    cancel_before = now - timedelta(days=AUTO_CANCEL_OVERDUE_DAYS)
+    transitions: list[dict] = []
     with conn.cursor() as cur:
-        cur.execute("UPDATE cd_ad_bookings SET status='active',updated_at=now() "
-                    "WHERE status='confirmed' AND payment_status IN ('paid','partially_paid') "
-                    "AND publish_at IS NOT NULL AND publish_at<=%s", (now,))
-        cur.execute("UPDATE cd_ad_bookings SET status='overdue',updated_at=now() "
-                    "WHERE status IN ('requested','confirmed') AND payment_status='unpaid' "
-                    "AND publish_at IS NOT NULL AND publish_at<=%s", (now,))
-        cur.execute("UPDATE cd_ad_bookings SET status='done',updated_at=now() "
-                    "WHERE status='active' AND delete_at IS NOT NULL AND delete_at<=%s", (now,))
-        cur.execute("UPDATE cd_ad_bookings SET status='cancelled',updated_at=now() "
-                    "WHERE status='overdue' AND publish_at IS NOT NULL AND publish_at<=%s", (cancel_before,))
+        cur.execute("""UPDATE cd_ad_bookings SET status='active',updated_at=now()
+        WHERE status='confirmed' AND payment_status IN ('paid','partially_paid')
+          AND publish_at IS NOT NULL AND publish_at<=%s
+        RETURNING id,workspace_id,status,publish_at""", (now,))
+        transitions.extend(cur.fetchall() or [])
+        cur.execute("""UPDATE cd_ad_bookings SET status='overdue',updated_at=now()
+        WHERE status IN ('requested','confirmed') AND payment_status='unpaid'
+          AND publish_at IS NOT NULL AND publish_at<=%s
+        RETURNING id,workspace_id,status,publish_at""", (now,))
+        transitions.extend(cur.fetchall() or [])
+        cur.execute("""UPDATE cd_ad_bookings SET status='done',updated_at=now()
+        WHERE status='active' AND delete_at IS NOT NULL AND delete_at<=%s""", (now,))
+        cur.execute("""UPDATE cd_ad_bookings b SET status='cancelled',updated_at=now()
+        FROM cd_workspaces w
+        WHERE b.workspace_id=w.id AND b.status='overdue'
+          AND b.publish_at IS NOT NULL
+          AND b.publish_at <= now() - (
+            CASE
+              WHEN COALESCE(w.settings->>'overdue_cancel_days','') ~ '^[0-9]+$'
+              THEN LEAST(30,GREATEST(1,(w.settings->>'overdue_cancel_days')::int))
+              ELSE 3
+            END * interval '1 day'
+          )
+        RETURNING b.id,b.workspace_id,b.status,b.publish_at""")
+        transitions.extend(cur.fetchall() or [])
+    return transitions
+
+
+def _notify_booking_transition(token: str, conn, transition: dict) -> None:
+    with conn.cursor() as cur:
+        cur.execute("""SELECT b.id,b.status,b.publish_at,a.name AS advertiser_name,c.title AS channel_title
+        FROM cd_ad_bookings b
+        LEFT JOIN cd_advertisers a ON a.id=b.advertiser_id
+        LEFT JOIN cd_channels c ON c.id=b.channel_id
+        WHERE b.id=%s AND b.workspace_id=%s""", (transition['id'], transition['workspace_id']))
+        booking = cur.fetchone()
+        cur.execute("""SELECT DISTINCT u.telegram_id FROM cd_workspace_members m
+        JOIN cd_users u ON u.id=m.user_id
+        WHERE m.workspace_id=%s AND m.status='active' AND m.role IN ('owner','admin')""",
+                    (transition['workspace_id'],))
+        recipients = cur.fetchall() or []
+    if not booking:
+        return
+    status = booking.get('status')
+    if status == 'active':
+        prefix = '✅ Размещение стало активным'
+    elif status == 'overdue':
+        prefix = '⚠ Размещение просрочено: оплата не поступила'
+    elif status == 'cancelled':
+        prefix = '❌ Просроченное размещение отменено автоматически'
+    else:
+        return
+    title = booking.get('advertiser_name') or f"бронь #{booking['id']}"
+    text = f"{prefix}\n{title} · бронь #{booking['id']}"
+    if booking.get('channel_title'):
+        text += f"\nКанал: {booking['channel_title']}"
+    for recipient in recipients:
+        try:
+            _telegram_request(token, 'sendMessage', {'chat_id': recipient['telegram_id'], 'text': text})
+        except Exception:
+            logger.exception('Failed to notify workspace admin about booking %s', booking['id'])
+    if not recipients:
+        # Резерв для старой конфигурации до появления участников в БД.
+        for raw in os.getenv('ADMIN_IDS', '').split(','):
+            if raw.strip().isdigit():
+                try:
+                    _telegram_request(token, 'sendMessage', {'chat_id': int(raw.strip()), 'text': text})
+                except Exception:
+                    logger.exception('Failed to notify ADMIN_IDS about booking %s', booking['id'])
 
 
 def _notify_owner(token: str, post_id: int, title: str, error_text: str) -> None:
@@ -335,7 +393,8 @@ def run_once() -> int:
         except Exception as exc:
             logger.exception('task reminders failed: %s', exc)
         try:
-            _update_booking_statuses(conn)
+            for transition in _update_booking_statuses(conn):
+                _notify_booking_transition(token, conn, transition)
         except Exception as exc:
             logger.exception('booking status update failed: %s', exc)
         global EXPORTS_RUNS, BOT_ANALYTICS_RUNS, BOT_ANALYTICS_LAST_RESULT

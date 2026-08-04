@@ -10,6 +10,9 @@ class FakeCur:
     def execute(self, sql, params=None):
         self.calls.append((sql, params))
 
+    def fetchall(self):
+        return []
+
     def __enter__(self):
         return self
 
@@ -36,3 +39,4 @@ def test_lifecycle_transitions(monkeypatch):
     assert any("status='overdue'" in s and "payment_status='unpaid'" in s for s in sqls)
     assert any("status='done'" in s and "delete_at" in s for s in sqls)
     assert any("status='cancelled'" in s and "status='overdue'" in s for s in sqls)
+    assert any('overdue_cancel_days' in s for s in sqls)
