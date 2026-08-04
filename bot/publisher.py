@@ -121,14 +121,14 @@ def _asset_to_media(asset: dict) -> dict:
     return {'type': 'document', 'media': asset['file_url']}
 
 
-def _send_media(telegram_request, token: str, assets: list[dict], text: str, buttons) -> int:
+def _send_media(telegram_request, token: str, chat_id: int, assets: list[dict], text: str, buttons) -> int:
     """Отправляет одно фото/видео/документ или медиагруппу. Возвращает message_id."""
     media = [_asset_to_media(a) for a in assets]
     if len(media) == 1:
         item = media[0]
         method = {'photo': 'sendPhoto', 'video': 'sendVideo', 'document': 'sendDocument'}[item['type']]
         param = {'photo': 'photo', 'video': 'video', 'document': 'document'}[item['type']]
-        params = {param: item['media'], 'caption': text or '', 'parse_mode': 'HTML'}
+        params = {'chat_id': chat_id, param: item['media'], 'caption': text or '', 'parse_mode': 'HTML'}
         if buttons:
             params['reply_markup'] = json.dumps({'inline_keyboard': buttons})
         result = telegram_request(token, method, params)
@@ -141,7 +141,7 @@ def _send_media(telegram_request, token: str, assets: list[dict], text: str, but
             entry['caption'] = text or ''
             entry['parse_mode'] = 'HTML'
         payload.append(entry)
-    result = telegram_request(token, 'sendMediaGroup', {'media': json.dumps(payload)})
+    result = telegram_request(token, 'sendMediaGroup', {'chat_id': chat_id, 'media': json.dumps(payload)})
     items = (result.get('result') or [])
     return items[0].get('message_id') if items else None
 
@@ -347,7 +347,7 @@ def _publish_one(token: str, conn, post: dict) -> None:
         buttons = post.get('buttons') or []
         assets = _load_assets(conn, post['id'])
         if assets:
-            message_id = _send_media(_telegram_request, token, assets, text, buttons)
+            message_id = _send_media(_telegram_request, token, channel['telegram_chat_id'], assets, text, buttons)
         else:
             params = {
                 'chat_id': channel['telegram_chat_id'],

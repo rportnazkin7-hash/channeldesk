@@ -165,6 +165,7 @@ def test_publish_with_single_photo(monkeypatch):
     assert len(sent) == 1
     method, params = sent[0]
     assert method == 'sendPhoto'
+    assert params['chat_id'] == CHANNEL['telegram_chat_id']
     assert params['photo'] == asset['file_url']
     assert params['caption'] == 'hello <b>world</b>'
     assert 'reply_markup' in params  # кнопки при одиночном медиа
@@ -190,6 +191,7 @@ def test_publish_with_media_group(monkeypatch):
     assert len(sent) == 1
     method, params = sent[0]
     assert method == 'sendMediaGroup'
+    assert params['chat_id'] == CHANNEL['telegram_chat_id']
     media = json.loads(params['media'])
     assert [m['type'] for m in media] == ['photo', 'video', 'document']
     assert media[0]['caption'] == 'hello <b>world</b>'  # caption только на первом
