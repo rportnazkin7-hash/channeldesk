@@ -94,7 +94,7 @@ async def status_cmd(message:Message):
                          f'БД: {db}\n'
                          f'БД-хэш: {db_hash}\n'
                          f'Цикл: последний {last_run_txt}, ошибок: {publisher.RUN_ERRORS}, экспорт-вызовов: {publisher.EXPORTS_RUNS}\n'
-                         f'Bot API аналитика: {bot_analytics_info}, Pulse отправлено: {publisher.PULSES_RUNS}\n'
+                         f'Bot API аналитика: {bot_analytics_info}, Pulse отправлено: {publisher.PULSES_RUNS}, заявок уведомлено: {publisher.SLOT_NOTIFICATIONS_RUNS}\n'
                          f'Процесс: PID {os.getpid()}, uptime {uptime} с\n'
                          f'Библиотеки: openpyxl {libs["openpyxl"]}, fpdf {libs["fpdf"]}, aiogram {libs["aiogram"]}\n'
                          f'Экспорты: {export_info}\n'
