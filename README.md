@@ -17,6 +17,9 @@ BOT_TOKEN=<токен @channel_desk_bot>
 DATABASE_URL=<Supabase URL>
 MINI_APP_URL=https://channeldesk.vercel.app
 ADMIN_IDS=<Telegram ID владельца>
+REQUIRED_CHANNEL=@thechanneldesk
+REQUIRED_CHANNEL_URL=https://t.me/thechanneldesk
+ZBT_ENABLED=true
 ```
 
 ## Настройки Bothost

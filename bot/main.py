@@ -1,10 +1,11 @@
 from __future__ import annotations
 import asyncio,json,logging,os,time
 import psycopg
-from aiogram import Bot,Dispatcher,Router
+from aiogram import Bot,Dispatcher,F,Router
 from aiogram.enums import ChatMemberStatus,ChatType
 from aiogram.filters import Command,CommandStart
-from aiogram.types import ChatMemberUpdated,InlineKeyboardButton,InlineKeyboardMarkup,Message,MessageReactionCountUpdated,WebAppInfo
+from aiogram.types import CallbackQuery,ChatMemberUpdated,InlineKeyboardButton,InlineKeyboardMarkup,Message,MessageReactionCountUpdated,WebAppInfo
+from bot.access import access_state,required_channel_url
 from bot.db import db_url
 from bot import migrate, publisher
 
@@ -42,16 +43,55 @@ def save_connection(event:ChatMemberUpdated,connected:bool)->None:
             cur.execute("UPDATE cd_channel_connections SET status='removed',updated_at=now() WHERE telegram_chat_id=%s",(event.chat.id,))
             cur.execute("UPDATE cd_channels SET is_connected=false,updated_at=now() WHERE telegram_chat_id=%s",(event.chat.id,))
 
-@router.message(CommandStart(deep_link=True))
-async def start_deep_link(message:Message):
-    token=extract_invite_token(message.text or '')
+SUBSCRIPTION_GATE_TEXT='Чтобы пользоваться ChannelDesk, сначала подпишитесь на наш канал. После подписки нажмите «Проверить подписку».'
+SUBSCRIPTION_CHECK_ERROR='Не удалось проверить подписку через Telegram. Попробуйте ещё раз через несколько секунд.'
+DEVELOPMENT_TEXT='🚧 Бот в разработке. Следите за обновлениями в нашем канале: https://t.me/thechanneldesk'
+
+
+def subscription_keyboard()->InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text='Подписаться на канал',url=required_channel_url())],
+        [InlineKeyboardButton(text='Проверить подписку',callback_data='check_required_subscription')],
+    ])
+
+
+def development_keyboard()->InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text='Канал ChannelDesk',url=required_channel_url())],
+    ])
+
+
+def mini_app_keyboard(url:str)->InlineKeyboardMarkup|None:
+    if not url:
+        return None
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text='Открыть ChannelDesk',web_app=WebAppInfo(url=url))
+    ]])
+
+
+async def send_entry_message(message:Message,invite_token:str|None=None):
+    state=await access_state(message.bot,message.from_user.id)
+    if not state['allowed']:
+        if state['closed']:
+            await message.answer(DEVELOPMENT_TEXT,reply_markup=development_keyboard())
+        elif state['subscribed'] is None:
+            await message.answer(SUBSCRIPTION_CHECK_ERROR,reply_markup=subscription_keyboard())
+        else:
+            await message.answer(SUBSCRIPTION_GATE_TEXT,reply_markup=subscription_keyboard())
+        return
+
     url=os.getenv('MINI_APP_URL','').strip()
-    if token and url:
+    if invite_token and url:
         keyboard=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(
-            text='Принять приглашение',web_app=WebAppInfo(url=f'{url}?startapp=invite_{token}'))]])
+            text='Принять приглашение',web_app=WebAppInfo(url=f'{url}?startapp=invite_{invite_token}'))]])
         await message.answer('Вас пригласили в рабочее пространство ChannelDesk. Нажмите кнопку, чтобы принять приглашение.',reply_markup=keyboard)
         return
-    await start(message)
+    await message.answer('ChannelDesk — каналы, реклама и команда в одном рабочем пространстве.',reply_markup=mini_app_keyboard(url))
+
+
+@router.message(CommandStart(deep_link=True))
+async def start_deep_link(message:Message):
+    await send_entry_message(message,extract_invite_token(message.text or ''))
 
 @router.message(Command('status'))
 async def status_cmd(message:Message):
@@ -103,9 +143,26 @@ async def status_cmd(message:Message):
 
 @router.message(CommandStart())
 async def start(message:Message):
-    url=os.getenv('MINI_APP_URL','').strip(); keyboard=None
-    if url: keyboard=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text='Открыть ChannelDesk',web_app=WebAppInfo(url=url))]])
-    await message.answer('ChannelDesk — каналы, реклама и команда в одном рабочем пространстве.',reply_markup=keyboard)
+    await send_entry_message(message)
+
+
+@router.callback_query(F.data=='check_required_subscription')
+async def check_required_subscription(callback:CallbackQuery):
+    state=await access_state(callback.bot,callback.from_user.id)
+    if state['allowed']:
+        await callback.answer('Подписка подтверждена ✅')
+        if callback.message:
+            await send_entry_message(callback.message)
+        return
+    if state['closed']:
+        await callback.answer('Подписка подтверждена. Бот пока в разработке.',show_alert=True)
+        if callback.message:
+            await callback.message.edit_text(DEVELOPMENT_TEXT,reply_markup=development_keyboard())
+        return
+    if state['subscribed'] is None:
+        await callback.answer('Не удалось проверить подписку. Попробуйте ещё раз.',show_alert=True)
+        return
+    await callback.answer('Подписка пока не найдена. Сначала подпишитесь на канал.',show_alert=True)
 
 @router.channel_post()
 async def channel_post_received(message: Message):
