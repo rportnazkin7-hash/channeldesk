@@ -59,7 +59,8 @@ class MediaGroupBatch:
 
 _pending: dict[str, PendingCapture] = {}
 _media_groups: dict[tuple[int, str], MediaGroupBatch] = {}
-_MEDIA_GROUP_WAIT = 1.0
+# Telegram присылает элементы альбома отдельными update; даём им время собраться.
+_MEDIA_GROUP_WAIT = 1.5
 
 
 def _clean_pending() -> None:
