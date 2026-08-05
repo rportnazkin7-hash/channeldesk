@@ -38,6 +38,7 @@ RUN_ERRORS: int = 0
 EXPORTS_RUNS: int = 0
 BOT_ANALYTICS_RUNS: int = 0
 BOT_ANALYTICS_LAST_RESULT: dict = {}
+PULSES_RUNS: int = 0
 
 RETRYABLE_HTTP = {408, 429, 500, 502, 503, 504}
 
@@ -452,6 +453,12 @@ def run_once() -> int:
         except Exception as exc:
             logger.exception('Bot API analytics failed: %s', exc)
             BOT_ANALYTICS_LAST_RESULT = {'ran': True, 'ok': 0, 'errors': [str(exc)[:300]]}
+        global PULSES_RUNS
+        try:
+            from bot.daily_pulse import send_due_pulses
+            PULSES_RUNS += send_due_pulses(conn, _telegram_request)
+        except Exception as exc:
+            logger.exception('Daily pulse failed: %s', exc)
         try:
             from bot.exports import process_pending_exports
             process_pending_exports(token, conn)
