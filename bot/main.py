@@ -1,10 +1,11 @@
 from __future__ import annotations
 import asyncio,json,logging,os,time
+from pathlib import Path
 import psycopg
 from aiogram import Bot,Dispatcher,F,Router
 from aiogram.enums import ChatMemberStatus,ChatType
 from aiogram.filters import Command,CommandStart
-from aiogram.types import CallbackQuery,ChatMemberUpdated,InlineKeyboardButton,InlineKeyboardMarkup,Message,MessageReactionCountUpdated,WebAppInfo
+from aiogram.types import CallbackQuery,ChatMemberUpdated,FSInputFile,InlineKeyboardButton,InlineKeyboardMarkup,Message,MessageReactionCountUpdated,WebAppInfo
 from bot.access import access_state,required_channel_url
 from bot.db import db_url
 from bot.forward_capture import router as forward_router
@@ -70,11 +71,82 @@ def mini_app_keyboard(url:str)->InlineKeyboardMarkup|None:
     ]])
 
 
+WELCOME_IMAGE=Path(__file__).resolve().parents[1]/'assets'/'welcome_channeldesk.png'
+WELCOME_CAPTION='''👋 Добро пожаловать в ChannelDesk!
+
+ChannelDesk помогает управлять Telegram-каналами в одном месте:
+• создавать и планировать посты;
+• принимать рекламные заявки;
+• работать с командой;
+• следить за публикациями и размещениями.
+
+Выберите нужный раздел ниже.'''
+WELCOME_CLOSED_CAPTION='''👋 Добро пожаловать в ChannelDesk!
+
+Сейчас бот находится в закрытом тестировании. Мы готовим запуск и постепенно открываем доступ.
+
+Пока можно посмотреть, как будет работать ChannelDesk, и следить за обновлениями в нашем канале.'''
+WELCOME_ABOUT_TEXT='''🧭 О ChannelDesk
+
+ChannelDesk — рабочее пространство для владельцев Telegram-каналов.
+
+В нём можно управлять контентом, рекламными размещениями, командой и каналами без постоянной путаницы в чатах.'''
+WELCOME_HELP_TEXT='''📖 Как пользоваться
+
+1. Подключите Telegram-канал в Mini App.
+2. Создайте рабочее пространство.
+3. Для быстрого черновика просто перешлите сообщение, фото, видео или документ этому боту.
+4. Выберите канал — бот соберёт черновик.
+5. Откройте черновик, проверьте текст и запланируйте публикацию.
+
+Посты не публикуются автоматически после пересылки.'''
+WELCOME_FORWARD_TEXT='''📥 Быстрый черновик
+
+1. Найдите нужный пост в Telegram.
+2. Нажмите «Переслать».
+3. Выберите этот бот.
+4. Если каналов несколько — выберите нужный канал.
+
+Один пересланный альбом сохранится одним черновиком со всеми вложениями.'''
+
+
+def welcome_keyboard(open_app:bool)->InlineKeyboardMarkup:
+    rows=[
+        [InlineKeyboardButton(text='О ChannelDesk',callback_data='welcome:about'),InlineKeyboardButton(text='Как пользоваться',callback_data='welcome:help')],
+    ]
+    if open_app:
+        rows.append([InlineKeyboardButton(text='Переслать → черновик',callback_data='welcome:forward')])
+        url=os.getenv('MINI_APP_URL','').strip()
+        if url:
+            rows.append([InlineKeyboardButton(text='Открыть Mini App',web_app=WebAppInfo(url=url))])
+    rows.append([InlineKeyboardButton(text='Канал обновлений',url=required_channel_url())])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def welcome_back_keyboard()->InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text='← Назад',callback_data='welcome:back')]])
+
+
+async def send_welcome(message:Message,user_id:int,state:dict|None=None):
+    state=state or await access_state(message.bot,user_id)
+    open_app=bool(state.get('allowed') and not state.get('closed'))
+    caption=WELCOME_CAPTION if open_app else WELCOME_CLOSED_CAPTION
+    keyboard=welcome_keyboard(open_app)
+    try:
+        if WELCOME_IMAGE.exists():
+            await message.answer_photo(FSInputFile(str(WELCOME_IMAGE)),caption=caption,reply_markup=keyboard)
+        else:
+            await message.answer(caption,reply_markup=keyboard)
+    except Exception as exc:
+        logger.warning('welcome image could not be sent: %s',str(exc)[:180])
+        await message.answer(caption,reply_markup=keyboard)
+
+
 async def send_entry_message(message:Message,invite_token:str|None=None,user_id:int|None=None):
     state=await access_state(message.bot,user_id if user_id is not None else message.from_user.id)
     if not state['allowed']:
         if state['closed']:
-            await message.answer(DEVELOPMENT_TEXT,reply_markup=development_keyboard())
+            await send_welcome(message,user_id if user_id is not None else message.from_user.id,state)
         elif state['subscribed'] is None:
             await message.answer(SUBSCRIPTION_CHECK_ERROR,reply_markup=subscription_keyboard())
         else:
@@ -87,7 +159,7 @@ async def send_entry_message(message:Message,invite_token:str|None=None,user_id:
             text='Принять приглашение',web_app=WebAppInfo(url=f'{url}?startapp=invite_{invite_token}'))]])
         await message.answer('Вас пригласили в рабочее пространство ChannelDesk. Нажмите кнопку, чтобы принять приглашение.',reply_markup=keyboard)
         return
-    await message.answer('ChannelDesk — каналы, реклама и команда в одном рабочем пространстве.',reply_markup=mini_app_keyboard(url))
+    await send_welcome(message,user_id if user_id is not None else message.from_user.id,state)
 
 
 @router.message(CommandStart(deep_link=True))
@@ -147,23 +219,59 @@ async def start(message:Message):
     await send_entry_message(message)
 
 
+async def edit_welcome_message(message:Message,text:str,markup:InlineKeyboardMarkup):
+    try:
+        if message.photo:
+            await message.edit_caption(caption=text,reply_markup=markup)
+        else:
+            await message.edit_text(text,reply_markup=markup)
+    except Exception:
+        await message.answer(text,reply_markup=markup)
+
+
 @router.callback_query(F.data=='check_required_subscription')
 async def check_required_subscription(callback:CallbackQuery):
     state=await access_state(callback.bot,callback.from_user.id)
     if state['allowed']:
         await callback.answer('Подписка подтверждена ✅')
         if callback.message:
-            await send_entry_message(callback.message,user_id=callback.from_user.id)
+            await edit_welcome_message(callback.message,'✅ Подписка подтверждена.',InlineKeyboardMarkup(inline_keyboard=[]))
+            await send_welcome(callback.message,callback.from_user.id,state)
         return
     if state['closed']:
         await callback.answer('Подписка подтверждена. Бот пока в разработке.',show_alert=True)
         if callback.message:
-            await callback.message.edit_text(DEVELOPMENT_TEXT,reply_markup=development_keyboard())
+            await edit_welcome_message(callback.message,'✅ Подписка подтверждена.',InlineKeyboardMarkup(inline_keyboard=[]))
+            await send_welcome(callback.message,callback.from_user.id,state)
         return
     if state['subscribed'] is None:
         await callback.answer('Не удалось проверить подписку. Попробуйте ещё раз.',show_alert=True)
         return
     await callback.answer('Подписка пока не найдена. Сначала подпишитесь на канал.',show_alert=True)
+
+
+@router.callback_query(F.data.startswith('welcome:'))
+async def welcome_action(callback:CallbackQuery):
+    action=(callback.data or '').split(':',1)[1]
+    if not callback.message:
+        await callback.answer()
+        return
+    await callback.answer()
+    if action=='about':
+        await edit_welcome_message(callback.message,WELCOME_ABOUT_TEXT,welcome_back_keyboard())
+    elif action=='help':
+        await edit_welcome_message(callback.message,WELCOME_HELP_TEXT,welcome_back_keyboard())
+    elif action=='forward':
+        await edit_welcome_message(callback.message,WELCOME_FORWARD_TEXT,welcome_back_keyboard())
+    elif action=='back':
+        state=await access_state(callback.bot,callback.from_user.id)
+        if state['allowed'] or state['closed']:
+            caption=WELCOME_CAPTION if state['allowed'] else WELCOME_CLOSED_CAPTION
+            await edit_welcome_message(callback.message,caption,welcome_keyboard(bool(state['allowed'])))
+        elif state['subscribed'] is None:
+            await edit_welcome_message(callback.message,SUBSCRIPTION_CHECK_ERROR,subscription_keyboard())
+        else:
+            await edit_welcome_message(callback.message,SUBSCRIPTION_GATE_TEXT,subscription_keyboard())
 
 @router.channel_post()
 async def channel_post_received(message: Message):
