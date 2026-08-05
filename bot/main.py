@@ -69,8 +69,8 @@ def mini_app_keyboard(url:str)->InlineKeyboardMarkup|None:
     ]])
 
 
-async def send_entry_message(message:Message,invite_token:str|None=None):
-    state=await access_state(message.bot,message.from_user.id)
+async def send_entry_message(message:Message,invite_token:str|None=None,user_id:int|None=None):
+    state=await access_state(message.bot,user_id if user_id is not None else message.from_user.id)
     if not state['allowed']:
         if state['closed']:
             await message.answer(DEVELOPMENT_TEXT,reply_markup=development_keyboard())
@@ -152,7 +152,7 @@ async def check_required_subscription(callback:CallbackQuery):
     if state['allowed']:
         await callback.answer('Подписка подтверждена ✅')
         if callback.message:
-            await send_entry_message(callback.message)
+            await send_entry_message(callback.message,user_id=callback.from_user.id)
         return
     if state['closed']:
         await callback.answer('Подписка подтверждена. Бот пока в разработке.',show_alert=True)
