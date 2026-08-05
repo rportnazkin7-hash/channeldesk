@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message, PhotoSize
 
-from bot.forward_capture import _buttons, _html_text, _title, extract_media
+from bot.forward_capture import _buttons, _combined_html_text, _combined_plain_text, _html_text, _title, extract_media
 
 
 def message_with_text(**kwargs):
@@ -33,6 +33,13 @@ def test_forward_photo_extracts_largest_photo():
     assert media[0].file_id == 'large'
     assert media[0].file_type == 'image/jpeg'
     assert _title(message, media) == 'Фото дня'
+
+
+def test_album_messages_are_combined_into_one_text_payload():
+    first = message_with_text(caption='Альбом\nПодпись')
+    second = message_with_text(caption='Второе фото')
+    assert _combined_plain_text([first, second]) == 'Альбом\nПодпись\nВторое фото'
+    assert 'Альбом' in _combined_html_text([first, second])
 
 
 def test_forwarded_url_buttons_are_copied():

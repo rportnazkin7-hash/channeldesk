@@ -41,12 +41,25 @@ class PendingCapture:
     token: str
     user_id: int
     user_db_id: int
-    message: Message
+    messages: list[Message]
     workspace_id: int | None = None
     created_at: float = 0.0
 
+    @property
+    def message(self) -> Message:
+        return self.messages[0]
+
+
+@dataclass
+class MediaGroupBatch:
+    user_id: int
+    messages: list[Message]
+    generation: int = 0
+
 
 _pending: dict[str, PendingCapture] = {}
+_media_groups: dict[tuple[int, str], MediaGroupBatch] = {}
+_MEDIA_GROUP_WAIT = 1.0
 
 
 def _clean_pending() -> None:
@@ -56,11 +69,12 @@ def _clean_pending() -> None:
         _pending.pop(token, None)
 
 
-def _put_pending(user_id: int, user_db_id: int, message: Message) -> PendingCapture:
+def _put_pending(user_id: int, user_db_id: int, messages: list[Message]) -> PendingCapture:
     _clean_pending()
     token = uuid.uuid4().hex[:12]
     item = PendingCapture(token=token, user_id=user_id, user_db_id=user_db_id,
-                          message=message, created_at=monotonic())
+                          messages=sorted(messages, key=lambda message: message.message_id),
+                          created_at=monotonic())
     _pending[token] = item
     return item
 
@@ -93,8 +107,16 @@ def _html_text(message: Message) -> str:
     return escape(_plain_text(message), quote=False).replace('\n', '\n')
 
 
-def _title(message: Message, media: list[MediaItem]) -> str:
-    plain = _plain_text(message)
+def _combined_plain_text(messages: list[Message]) -> str:
+    return '\n'.join(text for text in (_plain_text(message) for message in messages) if text).strip()
+
+
+def _combined_html_text(messages: list[Message]) -> str:
+    return '\n'.join(text for text in (_html_text(message) for message in messages) if text).strip()
+
+
+def _title(message: Message, media: list[MediaItem], plain_text: str | None = None) -> str:
+    plain = plain_text if plain_text is not None else _plain_text(message)
     first_line = next((line.strip() for line in plain.splitlines() if line.strip()), '')
     # Первая строка удобнее всего работает как заголовок для быстрого черновика.
     title = re.sub(r'\s+', ' ', first_line).strip()
@@ -262,7 +284,8 @@ def _open_app_keyboard(post_id: int, workspace_id: int) -> InlineKeyboardMarkup 
 
 async def _create_for_channel(bot: Bot, item: PendingCapture, channel_id: int | None) -> tuple[dict, str]:
     message = item.message
-    media = extract_media(message)
+    media = [media_item for source in item.messages for media_item in extract_media(source)]
+    plain_text = _combined_plain_text(item.messages)
     assets: list[tuple[MediaItem, str]] = []
     for media_item in media:
         file_url = await _materialize_media(bot, item.workspace_id or 0, media_item)
@@ -272,29 +295,33 @@ async def _create_for_channel(bot: Bot, item: PendingCapture, channel_id: int | 
         item.workspace_id or 0,
         channel_id,
         item.user_db_id,
-        _title(message, media),
-        _html_text(message),
+        _title(message, media, plain_text),
+        _combined_html_text(item.messages),
         _buttons(message),
         assets,
     )
-    return post, (next((c['title'] for c in _workspace_channels(item.workspace_id or 0) if c['id'] == channel_id), 'Без канала')
-                  if channel_id else 'Без канала')
+    channels = await asyncio.to_thread(_workspace_channels, item.workspace_id or 0)
+    channel_title = next((c['title'] for c in channels if c['id'] == channel_id), 'Без канала') if channel_id else 'Без канала'
+    return post, channel_title
 
 
 async def _finish_capture(callback_or_message, bot: Bot, item: PendingCapture, channel_id: int | None) -> None:
     post, channel_title = await _create_for_channel(bot, item, channel_id)
     _remove_pending(item.token)
+    media_count = sum(len(extract_media(message)) for message in item.messages)
     text = f'✅ Черновик #{post["id"]} создан\nКанал: {channel_title}\nСтатус: Черновик\n\nПост не публиковался автоматически.'
-    if item.message.text or item.message.caption:
+    if _combined_plain_text(item.messages):
         text += '\nТекст сохранён.'
-    if extract_media(item.message):
-        text += f'\nВложений: {len(extract_media(item.message))}.'
+    if media_count:
+        text += f'\nВложений: {media_count}.'
     await callback_or_message.answer(text, reply_markup=_open_app_keyboard(post['id'], item.workspace_id or 0))
 
 
-@router.message(F.forward_origin)
-async def capture_forwarded_message(message: Message):
-    state = await access_state(message.bot, message.from_user.id)
+async def _capture_messages(messages: list[Message], bot: Bot) -> None:
+    messages = sorted(messages, key=lambda message: message.message_id)
+    message = messages[0]
+    user_id = message.from_user.id
+    state = await access_state(bot, user_id)
     if not state['allowed']:
         if state['closed']:
             await message.answer('🚧 Бот в разработке. Следите за обновлениями в канале @thechanneldesk.')
@@ -304,7 +331,7 @@ async def capture_forwarded_message(message: Message):
 
     user_data = message.from_user.model_dump() if message.from_user else {}
     try:
-        user_id, workspaces = await asyncio.to_thread(_user_and_workspaces, message.from_user.id, user_data)
+        user_db_id, workspaces = await asyncio.to_thread(_user_and_workspaces, user_id, user_data)
     except Exception as exc:  # noqa: BLE001
         logger.exception('failed to load workspaces for forwarded message: %s', exc)
         await message.answer('Не удалось сохранить материал. Попробуйте ещё раз.')
@@ -313,7 +340,7 @@ async def capture_forwarded_message(message: Message):
         await message.answer('У вас пока нет рабочего пространства с правом создания постов. Сначала создайте его в Mini App.')
         return
 
-    item = _put_pending(message.from_user.id, user_id, message)
+    item = _put_pending(user_id, user_db_id, messages)
     if len(workspaces) > 1:
         await message.answer('Выберите рабочее пространство для черновика:', reply_markup=_workspace_keyboard(workspaces, item.token))
         return
@@ -321,13 +348,44 @@ async def capture_forwarded_message(message: Message):
     channels = await asyncio.to_thread(_workspace_channels, item.workspace_id)
     if len(channels) == 1:
         try:
-            await _finish_capture(message, message.bot, item, channels[0]['id'])
+            await _finish_capture(message, bot, item, channels[0]['id'])
         except Exception:
             _remove_pending(item.token)
             logger.exception('failed to create forwarded draft')
             await message.answer('Материал принят, но черновик не создался. Попробуйте повторить.')
         return
     await message.answer('В какой канал сохранить черновик?', reply_markup=_channel_keyboard(channels, item.token))
+
+
+async def _flush_media_group(key: tuple[int, str], batch: MediaGroupBatch, generation: int) -> None:
+    await asyncio.sleep(_MEDIA_GROUP_WAIT)
+    current = _media_groups.get(key)
+    if current is not batch or current.generation != generation:
+        return
+    _media_groups.pop(key, None)
+    try:
+        await _capture_messages(batch.messages, batch.messages[0].bot)
+    except Exception:
+        logger.exception('failed to capture forwarded media group')
+        await batch.messages[0].answer('Не удалось сохранить альбом. Попробуйте переслать его ещё раз.')
+
+
+@router.message(F.forward_origin)
+async def capture_forwarded_message(message: Message):
+    media_group_id = getattr(message, 'media_group_id', None)
+    if not media_group_id:
+        await _capture_messages([message], message.bot)
+        return
+
+    key = (message.from_user.id, str(media_group_id))
+    batch = _media_groups.get(key)
+    if batch is None:
+        batch = MediaGroupBatch(user_id=message.from_user.id, messages=[])
+        _media_groups[key] = batch
+    batch.messages.append(message)
+    batch.generation += 1
+    generation = batch.generation
+    asyncio.create_task(_flush_media_group(key, batch, generation))
 
 
 @router.callback_query(F.data.startswith('fc:'))
