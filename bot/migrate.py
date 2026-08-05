@@ -8,7 +8,7 @@ from bot.db import db_url
 
 logger = logging.getLogger('channeldesk.migrate')
 
-MIGRATIONS_DIR = Path(__file__).resolve().parents[2] / 'migrations'
+MIGRATIONS_DIR = Path(__file__).resolve().parents[1] / 'migrations'
 
 
 def apply_pending_migrations() -> int:
