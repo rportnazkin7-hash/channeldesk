@@ -7,6 +7,7 @@ from aiogram.filters import Command,CommandStart
 from aiogram.types import CallbackQuery,ChatMemberUpdated,InlineKeyboardButton,InlineKeyboardMarkup,Message,MessageReactionCountUpdated,WebAppInfo
 from bot.access import access_state,required_channel_url
 from bot.db import db_url
+from bot.forward_capture import router as forward_router
 from bot import migrate, publisher
 
 logger=logging.getLogger('channeldesk.bot')
@@ -198,13 +199,13 @@ async def main():
         await asyncio.to_thread(migrate.apply_pending_migrations)
     except Exception as exc:
         logger.warning('migration check skipped: %s', exc)
-    bot=Bot(token);dp=Dispatcher();dp.include_router(router)
+    bot=Bot(token);dp=Dispatcher();dp.include_router(forward_router);dp.include_router(router)
     # Фоновый publisher-цикл в том же процессе (Bothost: один Python Worker).
     # Отдельное соединение на цикл — безопасно с aiogram.
     global _publisher_task
     _publisher_task=asyncio.create_task(publisher.loop())
     try:
-        await dp.start_polling(bot,allowed_updates=['message','my_chat_member','channel_post','edited_channel_post','message_reaction_count'])
+        await dp.start_polling(bot,allowed_updates=['message','callback_query','my_chat_member','channel_post','edited_channel_post','message_reaction_count'])
     finally:
         _publisher_task.cancel()
         try: await _publisher_task

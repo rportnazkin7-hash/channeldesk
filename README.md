@@ -17,6 +17,8 @@ BOT_TOKEN=<токен @channel_desk_bot>
 DATABASE_URL=<Supabase URL>
 MINI_APP_URL=https://channeldesk.vercel.app
 ADMIN_IDS=<Telegram ID владельца>
+SUPABASE_URL=<необязательно для медиа из пересланных сообщений>
+SUPABASE_ANON_KEY=<необязательно для медиа из пересланных сообщений>
 REQUIRED_CHANNEL=@thechanneldesk
 REQUIRED_CHANNEL_URL=https://t.me/thechanneldesk
 ZBT_ENABLED=true
@@ -31,6 +33,10 @@ Python: 3.11
 Entry point: bot/main.py
 Requirements: requirements.txt
 ```
+
+## Быстрый черновик из Telegram
+
+Перешлите боту сообщение, фото, видео или документ. Бот предложит рабочее пространство и канал, создаст пост со статусом `draft` и даст кнопку «Открыть черновик». Публикация автоматически не запускается. Медиа сохраняются в Supabase Storage при наличии `SUPABASE_URL` и `SUPABASE_ANON_KEY`; иначе publisher использует Telegram `file_id`.
 
 ## Publisher (очередь публикаций, Этап B)
 
