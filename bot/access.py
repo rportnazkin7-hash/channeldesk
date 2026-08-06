@@ -27,8 +27,20 @@ def admin_ids() -> set[int]:
     }
 
 
+def beta_tester_ids() -> set[int]:
+    return {
+        int(raw.strip())
+        for raw in os.getenv('BETA_TESTER_IDS', '').split(',')
+        if raw.strip().isdigit()
+    }
+
+
 def is_admin(user_id: int) -> bool:
     return user_id in admin_ids()
+
+
+def is_beta_tester(user_id: int) -> bool:
+    return user_id in beta_tester_ids()
 
 
 def zbt_enabled() -> bool:
@@ -65,6 +77,8 @@ async def access_state(bot: Bot, user_id: int) -> dict[str, bool | None]:
     subscribed = await subscription_status(bot, user_id)
     if subscribed is not True:
         return {'admin': False, 'subscribed': subscribed, 'allowed': False, 'closed': False}
+    if is_beta_tester(user_id):
+        return {'admin': False, 'subscribed': True, 'allowed': True, 'closed': False}
     if zbt_enabled():
         return {'admin': False, 'subscribed': True, 'allowed': False, 'closed': True}
     return {'admin': False, 'subscribed': True, 'allowed': True, 'closed': False}

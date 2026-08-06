@@ -17,6 +17,7 @@ BOT_TOKEN=<токен @channel_desk_bot>
 DATABASE_URL=<Supabase URL>
 MINI_APP_URL=https://channeldesk.vercel.app
 ADMIN_IDS=<Telegram ID владельца>
+BETA_TESTER_IDS=<Telegram ID тестировщиков через запятую>
 SUPABASE_URL=<необязательно для медиа из пересланных сообщений>
 SUPABASE_ANON_KEY=<необязательно для медиа из пересланных сообщений>
 REQUIRED_CHANNEL=@thechanneldesk

@@ -40,6 +40,15 @@ def test_subscribed_user_sees_zbt(monkeypatch):
 
 def test_admin_bypasses_subscription_and_zbt(monkeypatch):
     monkeypatch.setenv('ADMIN_IDS', '42')
+    monkeypatch.setenv('BETA_TESTER_IDS', '')
     monkeypatch.setenv('ZBT_ENABLED', 'true')
     state = asyncio.run(access_state(FakeBot(error=RuntimeError('must not check')), 42))
     assert state == {'admin': True, 'subscribed': True, 'allowed': True, 'closed': False}
+
+
+def test_beta_tester_gets_access_after_subscription(monkeypatch):
+    monkeypatch.setenv('ADMIN_IDS', '999')
+    monkeypatch.setenv('BETA_TESTER_IDS', '42')
+    monkeypatch.setenv('ZBT_ENABLED', 'true')
+    state = asyncio.run(access_state(FakeBot(SimpleNamespace(status='member')), 42))
+    assert state == {'admin': False, 'subscribed': True, 'allowed': True, 'closed': False}
