@@ -27,7 +27,7 @@ https://channeldesk.vercel.app/api/health/storage
 
 Ожидаемо:
 
-- `/api/health` возвращает `ok: true` и текущую версию;
+- `/api/health` возвращает `ok: true` и версию `0.47.0`;
 - миграции содержат `001`–`016`, `019`–`028`;
 - storage показывает настроенные `SUPABASE_URL` и `SUPABASE_ANON_KEY`.
 
