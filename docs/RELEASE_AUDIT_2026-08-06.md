@@ -14,6 +14,7 @@
 - Синтаксис Python и дубли миграций Web/Bot.
 - Runtime не использует TGStat, Telemetr или MTProto.
 - `SUPABASE_SERVICE_ROLE_KEY` удалён из release-конфигурации.
+- Добавлена система баг-репортов из Bot и Mini App.
 
 ## Что улучшено
 
@@ -32,7 +33,7 @@
 
 1. Redeploy Web и Bot.
 2. Проверить `/api/health` — ожидается версия `0.47.0`.
-3. Проверить миграции `027_partner_api` и `028_public_newsdesk`.
+3. Проверить миграции `027_partner_api`, `028_public_newsdesk` и `029_bug_reports`.
 4. Проверить `DB_POOL_ENABLED=true` на Vercel.
 5. Убедиться, что `DEV_API_KEY` не задан в production.
 6. Убедиться, что в production нет `SUPABASE_SERVICE_ROLE_KEY`.
