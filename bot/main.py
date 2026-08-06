@@ -47,29 +47,11 @@ def save_connection(event:ChatMemberUpdated,connected:bool)->None:
 
 SUBSCRIPTION_GATE_TEXT='Чтобы пользоваться ChannelDesk, сначала подпишитесь на наш канал. После подписки нажмите «Проверить подписку».'
 SUBSCRIPTION_CHECK_ERROR='Не удалось проверить подписку через Telegram. Попробуйте ещё раз через несколько секунд.'
-DEVELOPMENT_TEXT='🚧 Бот в разработке. Следите за обновлениями в нашем канале: https://t.me/thechanneldesk'
-
-
 def subscription_keyboard()->InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text='Подписаться на канал',url=required_channel_url())],
         [InlineKeyboardButton(text='Проверить подписку',callback_data='check_required_subscription')],
     ])
-
-
-def development_keyboard()->InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text='Канал ChannelDesk',url=required_channel_url())],
-    ])
-
-
-def mini_app_keyboard(url:str)->InlineKeyboardMarkup|None:
-    if not url:
-        return None
-    return InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text='Открыть ChannelDesk',web_app=WebAppInfo(url=url))
-    ]])
-
 
 WELCOME_IMAGE=Path(__file__).resolve().parents[1]/'assets'/'welcome_channeldesk.png'
 WELCOME_CAPTION='''👋 Добро пожаловать в ChannelDesk!
