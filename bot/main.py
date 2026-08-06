@@ -7,6 +7,7 @@ from aiogram.enums import ChatMemberStatus,ChatType
 from aiogram.filters import Command,CommandStart
 from aiogram.types import CallbackQuery,ChatMemberUpdated,FSInputFile,InlineKeyboardButton,InlineKeyboardMarkup,Message,MessageReactionCountUpdated,WebAppInfo
 from bot.access import access_state,required_channel_url
+from bot.bug_reports import router as bug_router, start_bug_report
 from bot.db import db_url
 from bot.forward_capture import router as forward_router
 from bot import migrate, publisher
@@ -96,6 +97,7 @@ def welcome_keyboard(open_app:bool)->InlineKeyboardMarkup:
     rows=[
         [InlineKeyboardButton(text='О ChannelDesk',callback_data='welcome:about'),InlineKeyboardButton(text='Как пользоваться',callback_data='welcome:help')],
     ]
+    rows.append([InlineKeyboardButton(text='🐞 Сообщить об ошибке',callback_data='welcome:bug')])
     if open_app:
         rows.append([InlineKeyboardButton(text='Переслать → черновик',callback_data='welcome:forward')])
         url=os.getenv('MINI_APP_URL','').strip()
@@ -245,6 +247,8 @@ async def welcome_action(callback:CallbackQuery):
         await edit_welcome_message(callback.message,WELCOME_HELP_TEXT,welcome_back_keyboard())
     elif action=='forward':
         await edit_welcome_message(callback.message,WELCOME_FORWARD_TEXT,welcome_back_keyboard())
+    elif action=='bug':
+        await start_bug_report(callback.message,callback.from_user.id)
     elif action=='back':
         state=await access_state(callback.bot,callback.from_user.id)
         if state['allowed'] or state['closed']:
@@ -289,7 +293,7 @@ async def main():
         await asyncio.to_thread(migrate.apply_pending_migrations)
     except Exception as exc:
         logger.warning('migration check skipped: %s', exc)
-    bot=Bot(token);dp=Dispatcher();dp.include_router(forward_router);dp.include_router(router)
+    bot=Bot(token);dp=Dispatcher();dp.include_router(bug_router);dp.include_router(forward_router);dp.include_router(router)
     # Фоновый publisher-цикл в том же процессе (Bothost: один Python Worker).
     # Отдельное соединение на цикл — безопасно с aiogram.
     global _publisher_task
