@@ -13,7 +13,7 @@ from bot import migrate, publisher
 
 logger=logging.getLogger('channeldesk.bot')
 router=Router()
-BOT_CODE_VERSION='bot-api-pulse'
+BOT_CODE_VERSION='bot-api-newsdesk-0.47.0'
 _process_started=time.time()
 _publisher_task=None
 
